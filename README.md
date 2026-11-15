@@ -4,7 +4,10 @@
 
 It validates declarative `.kdl` schemas (`SourceLoader` filesystem and in-memory VFS, explicit `import` resolution, `E000`–`E403` / `W011`–`W041` static linting, **Algebraic AST** lowering, and pipeline type checking) and generates standalone, zero-framework source code across 9 targets: **Python**, **TypeScript**, **JavaScript (ESM + `.d.ts`)**, **Go**, **Rust**, **Elixir 1.18+ (Erlang/OTP 27–29)**, **PHP 8.1+ (`native` & `dom-crawler`)**, **C# (.NET 8+)**, and **Kotlin (JVM)**.
 
-[Why `parsmith`?](#why-parsmith) · [End-to-End Showcase](#end-to-end-showcase) · [Target Matrix & Ecosystem Fit](#target-matrix--ecosystem-fit) · [Tooling, SDKs & Selector Health](#tooling-host-sdks--selector-health-check) · [Documentation](#documentation) · [Architecture & Development](#workspace-architecture--development-workflow)
+[**Interactive Playground**](https://vypivshiy.github.io/parsmith/) · [Why `parsmith`?](#why-parsmith) · [End-to-End Showcase](#end-to-end-showcase) · [Target Matrix & Ecosystem Fit](#target-matrix--ecosystem-fit) · [Tooling, SDKs & Selector Health](#tooling-host-sdks--selector-health-check) · [Documentation](#documentation) · [Architecture & Development](#workspace-architecture--development-workflow)
+
+>[!tip]
+>**Try `parsmith` in the Browser**: Open the [**Interactive WebAssembly Playground**](https://vypivshiy.github.io/parsmith/) to edit `.kdl` schemas with live `E000`–`E403` / `W011`–`W041` diagnostics, inspect generated code across all 9 target languages in real time, infer schemas from raw JSON (`json-to-kdl`), and run live CSS/XPath selector health checks against HTML snapshots—zero installation required.
 
 ---
 
