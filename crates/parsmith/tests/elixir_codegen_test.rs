@@ -529,6 +529,58 @@ fn elixir_all_integration_schemas_generate_cleanly() {
     }
 }
 
+#[cfg(windows)]
+fn resolve_latest_erts_bin() -> Option<PathBuf> {
+    let mut otp_roots = Vec::new();
+    if let Some(path_os) = std::env::var_os("PATH") {
+        for entry in std::env::split_paths(&path_os) {
+            if entry.join("erl.exe").exists()
+                && let Some(parent) = entry.parent()
+            {
+                otp_roots.push(parent.to_path_buf());
+                if let Some(grandparent) = parent.parent() {
+                    otp_roots.push(grandparent.to_path_buf());
+                }
+            }
+        }
+    }
+    let default_root = PathBuf::from(r"C:\Program Files\Erlang OTP");
+    if default_root.exists() {
+        otp_roots.push(default_root);
+    }
+
+    let mut best: Option<((u32, u32, u32, u32), PathBuf)> = None;
+    for root in otp_roots {
+        let Ok(entries) = fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let Some(ver_str) = name.strip_prefix("erts-") else {
+                continue;
+            };
+            let bin_dir = path.join("bin");
+            if !bin_dir.join("erl.exe").exists() || !bin_dir.join("beam.smp.dll").exists() {
+                continue;
+            }
+            let mut parts = ver_str.split('.').map(|s| s.parse::<u32>().unwrap_or(0));
+            let key = (
+                parts.next().unwrap_or(0),
+                parts.next().unwrap_or(0),
+                parts.next().unwrap_or(0),
+                parts.next().unwrap_or(0),
+            );
+            if best.as_ref().is_none_or(|(best_key, _)| key > *best_key) {
+                best = Some((key, bin_dir));
+            }
+        }
+    }
+    best.map(|(_, dir)| dir)
+}
+
 #[test]
 fn elixir_toolchain_check_and_execution() {
     let elixir_bin = if cfg!(windows) {
@@ -633,7 +685,28 @@ fn elixir_toolchain_check_and_execution() {
     );
 
     let runner_exs = format!(
-        r###"Mix.install([{{:floki, "~> 0.36"}}], consolidate_protocols: false)
+        r###"Mix.start()
+
+case Path.wildcard(
+       Path.join([
+         Mix.Utils.mix_cache(),
+         "installs",
+         "ex-#{{System.version()}}-erl-#{{:erlang.system_info(:version)}}",
+         "*",
+         "_build",
+         "dev",
+         "lib",
+         "floki",
+         "ebin"
+       ])
+     ) do
+  [ebin | _] ->
+    Code.prepend_path(ebin)
+    {{:ok, _}} = Application.ensure_all_started(:floki)
+
+  [] ->
+    Mix.install([{{:floki, "~> 0.36"}}], consolidate_protocols: false)
+end
 
 {}
 
@@ -924,16 +997,30 @@ ToolchainRunner.run()
 
     tmp.write("runner.exs", &runner_exs);
 
-    let out = Command::new(elixir_bin)
-        .arg("runner.exs")
-        .current_dir(&tmp.path)
-        .output()
-        .expect("execute elixir runner.exs");
+    let mut cmd = Command::new(elixir_bin);
+    cmd.arg("runner.exs").current_dir(&tmp.path);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        if let Some(erts_bin) = resolve_latest_erts_bin() {
+            let mut paths = vec![erts_bin];
+            if let Some(existing) = std::env::var_os("PATH") {
+                paths.extend(std::env::split_paths(&existing));
+            }
+            if let Ok(joined) = std::env::join_paths(paths) {
+                cmd.env("PATH", joined);
+            }
+        }
+    }
+    let out = cmd.output().expect("execute elixir runner.exs");
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         out.status.success() && stdout.contains("ELIXIR_TOOLCHAIN_OK") && stderr.trim().is_empty(),
-        "elixir runner.exs failed or emitted warnings!\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        "elixir runner.exs failed or emitted warnings! (status: {:?})\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        out.status
     );
 }

@@ -1032,7 +1032,49 @@ ParsmithElixirWorker.loop()
 """
 
 
+def _ensure_windows_erts_path() -> None:
+    if sys.platform != "win32":
+        return
+    otp_roots: list[Path] = []
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        p = Path(entry)
+        if (p / "erl.exe").is_file():
+            otp_roots.append(p.parent)
+            otp_roots.append(p.parent.parent)
+    default_root = Path(r"C:\Program Files\Erlang OTP")
+    if default_root.is_dir():
+        otp_roots.append(default_root)
+
+    best_key: tuple[int, ...] = ()
+    best_bin: Path | None = None
+    for root in otp_roots:
+        if not root.is_dir():
+            continue
+        for child in root.iterdir():
+            if not child.name.startswith("erts-"):
+                continue
+            bin_dir = child / "bin"
+            if not (bin_dir / "erl.exe").is_file() or not (bin_dir / "beam.smp.dll").is_file():
+                continue
+            ver_parts = tuple(
+                int(part) if part.isdigit() else 0
+                for part in child.name[5:].split(".")
+            )
+            if ver_parts > best_key:
+                best_key = ver_parts
+                best_bin = bin_dir
+
+    if best_bin is not None:
+        best_str = str(best_bin)
+        cur_path = os.environ.get("PATH", "")
+        if not cur_path.startswith(best_str + os.pathsep):
+            os.environ["PATH"] = best_str + os.pathsep + cur_path
+
+
 def _ensure_elixir_workspace() -> tuple[str, Path]:
+    _ensure_windows_erts_path()
     elixir_cmd = _require_bin("elixir")
     _ELIXIR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     _ELIXIR_BINS_DIR.mkdir(parents=True, exist_ok=True)

@@ -38,6 +38,20 @@ try {
 
     Write-Host "==> Preparing parsmith v$Version release in $RepoRoot\Release" -ForegroundColor Cyan
 
+    # Sync any newly added User/Machine PATH entries into the current session
+    $MachinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $UserPath    = [Environment]::GetEnvironmentVariable("Path", "User")
+    $CurrentEntries = @($env:PATH -split ';' | Where-Object { $_ -ne '' })
+    $FreshEntries = @()
+    foreach ($p in @($UserPath -split ';') + @($MachinePath -split ';')) {
+        if ($p -ne '' -and $CurrentEntries -notcontains $p) {
+            $FreshEntries += $p
+        }
+    }
+    if ($FreshEntries.Count -gt 0) {
+        $env:PATH = ($FreshEntries + $CurrentEntries) -join ';'
+    }
+
     # Locate Python / Maturin / Zig in .venv
     $VenvDir = Join-Path $RepoRoot ".venv"
     $VenvScripts = Join-Path $VenvDir "Scripts"
@@ -302,5 +316,13 @@ try {
         Name = "Size (KB)"; Expression = { [math]::Round($_.Length / 1KB, 1) }
     } | Format-Table -AutoSize
 } finally {
+    foreach ($envVar in @(
+        "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER",
+        "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER",
+        "CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER",
+        "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER"
+    )) {
+        Remove-Item "Env:$envVar" -ErrorAction SilentlyContinue
+    }
     Pop-Location
 }
