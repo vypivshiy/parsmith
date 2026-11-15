@@ -73,16 +73,12 @@ json SellerMeta {
         to-float
         fallback 0.0
     }
-    seller {
-        css "script.seller-data"
-        text
-        jsonify SellerMeta
-    }
+    seller { css "script.seller-data"; text; jsonify SellerMeta }
 }
 
 // 3. Page-level container
 struct CatalogPage {
-    heading { css "h1"; text; trim }
+    heading  { css "h1"; text; trim }
     products { nested ProductCard }
 }
 ```
@@ -92,11 +88,12 @@ Validate and compile to any target:
 ```bash
 parsmith check catalog.kdl
 
-parsmith generate python catalog.kdl -o catalog.py
-parsmith generate ts     catalog.kdl -o catalog.ts
-parsmith generate go     catalog.kdl -o catalog.go
-parsmith generate rust   catalog.kdl -o catalog.rs
-parsmith generate elixir catalog.kdl -o catalog.ex
+# Full target names (`python`, `rust`, `elixir`, `csharp`, `kotlin`) and short aliases (`py`, `rs`, `ex`, `cs`, `kt`) both work:
+parsmith generate py catalog.kdl -o catalog.py
+parsmith generate ts catalog.kdl -o catalog.ts
+parsmith generate go catalog.kdl -o catalog.go
+parsmith generate rs catalog.kdl -o catalog.rs
+parsmith generate ex catalog.kdl -o catalog.ex
 ```
 
 Call the generated parser in your target runtime:
@@ -142,33 +139,44 @@ data = html |> CatalogPage.new() |> CatalogPage.parse()
 IO.puts("#{data.heading}: #{hd(data.products).seller.store_name}")
 ```
 
-<details>
-<summary><strong>Under the hood: What <code>parsmith</code> generates from <code>catalog.kdl</code> (Types, Allowlist Projectors & Safe Fallbacks)</strong></summary>
+#### Under the Hood: What `parsmith` Synthesizes
 
-From the 30-line schema above, `parsmith` synthesizes static types, an allowlist JSON projector that strips undeclared wire keys and validates field types/nullability at runtime, immutable DOM cloning for `css-remove`, and scoped exception handling for `fallback`:
+From the 20-line `.kdl` schema above, the 2-pass compiler (`DryRun` + `Emit`) generates a self-contained module with four layers of boilerplate handled automatically:
 
-```python
-# Excerpt from generated Python module (`parsmith generate python catalog.kdl`)
-class SellerMetaJson(TypedDict):
-    id: int
-    store_name: str
-    rating: float | None
+```text
+// 1. Static Output & Wire Models (TypedDict / dataclass / interface / struct / record / data class)
+type SellerMetaJson  = { id: Int, store_name: String, rating: Float? }
+type ProductCardType = { title: String, price: Float, seller: SellerMetaJson }
+type CatalogPageType = { heading: String, products: List<ProductCardType> }
 
-class ProductCardType(TypedDict):
-    title: str
-    price: float
-    seller: SellerMetaJson
-
-def rt_project_seller_meta(data: Any, ctx: str = "SellerMeta") -> SellerMetaJson:
-    obj = rt_expect_json_obj(data, ctx)
+// 2. Strict Allowlist JSON Projector (drops undeclared wire keys, enforces types & nullability)
+fn rt_project_seller_meta(raw_json) -> SellerMetaJson:
+    obj = expect_object(raw_json)
     return {
-        "id": rt_expect_int(rt_json_get(obj, "id", required=True, ctx=ctx), f"{ctx}.id"),
-        "store_name": rt_expect_str(rt_gjson_get(obj, "store.name", required=True, ctx=ctx), f"{ctx}.store_name"),
-        "rating": rt_expect_opt_float(rt_gjson_get(obj, "store.rating", required=False, ctx=ctx), f"{ctx}.rating"),
+        id:         expect_int(obj["id"], required: true),
+        store_name: expect_str(gjson_get(obj, "store.name"), required: true),
+        rating:     expect_float_or_null(gjson_get(obj, "store.rating"), required: false),
     }
-```
 
-</details>
+// 3. Scoped Field Pipelines (immutable DOM removal, regex group 1, fallback recovery)
+struct ProductCard(doc):
+    fn parse_title(card) -> String:
+        node = css_one(card, "h3.title")
+        clean = css_remove_clone(node, ".promo-badge")   // never mutates shared DOM in-place
+        return trim(text(clean))
+
+    fn parse_price(card) -> Float:
+        try:
+            raw = text(css_one(card, ".price"))
+            match = regex_group_1(raw, /(\d+\.\d{2})/)
+            return to_float(match)
+        catch MissingNode | RegexMismatch | ParseError:
+            return 0.0                                   // terminal `fallback 0.0`
+
+    fn parse_seller(card) -> SellerMetaJson:
+        raw = text(css_one(card, "script.seller-data"))
+        return rt_project_seller_meta(json_decode(raw))
+```
 
 ---
 
@@ -283,17 +291,17 @@ OpenAPI (Swagger) and `parsmith` solve opposite ends of the API lifecycle:
 
 A single `.kdl` schema compiles to idiomatic, type-checked source code across nine targets:
 
-| Target | CLI Subcommand | HTML / DOM Backend | Models & JSON Projectors | HTTP & REST Transport | Runtime Options |
+| Target | CLI Subcommand (& Alias) | HTML / DOM Backend | Models & JSON Projectors | HTTP & REST Transport | Runtime Options |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Python** | `parsmith generate python` | `bs4` (default; `--bs4-parser lxml\|html.parser\|html5lib`), `lxml`, `parsel`, `selectolax` | `TypedDict` (default) or `dataclass` (`--models`); `rt_project_*` allowlist projectors | `SyncTransport` / `AsyncTransport` (`via_httpx`, `via_httpx_async`, `via_requests`, `via_aiohttp`, `via_urllib`); `--http-io both\|sync\|async` | Single file (default) or `-R` / `--separate-runtime` |
-| **TypeScript** | `parsmith generate ts` | Standard Web DOM (`DOMParser`, `querySelectorAll`, `document.evaluate`) | Exported `interface` definitions + `rtProject*` allowlist projectors | `SyncTransport` / `AsyncTransport` (`viaFetch`, `viaAxios`) | Standalone `.ts` module |
-| **JavaScript** | `parsmith generate js` | Standard Web DOM (`DOMParser`, `querySelectorAll`, `document.evaluate`) | ESM `.js` + companion `.d.ts` TypeScript declarations + `rtProject*` projectors | `SyncTransport` / `AsyncTransport` (`viaFetch`, `viaAxios`) | Dual `.js` + `.d.ts` files |
-| **Go** | `parsmith generate go` | `goquery` (`github.com/PuerkitoBio/goquery`) | Typed `struct` + `gjson` allowlist `UnmarshalJSON` | Standard `*http.Client` (`net/http`) + `WithHeader` / `WithParam` / `WithCookie` / `WithTimeout` | Single file (default) or `-R` / `--separate-runtime` (`--package <pkg>`) |
-| **Rust** | `parsmith generate rust` | `dom_query` | `#[derive(Serialize)]` `struct` + `serde_json` `rt::project_*` allowlist projectors | `&reqwest::Client` (async `reqwest`) + `rt::HttpOption` | Single file with `pub mod rt` (default) or `-R` / `--separate-runtime` |
-| **Elixir** | `parsmith generate elixir` | `Floki` (`Floki.parse_document!/1`, `Floki.find/2`) | `defstruct` + `@derive JSON.Encoder` + `Rt.project_*` allowlist projectors | Built-in OTP `:httpc` (`Rt.via_httpc/1`) + `Rt.via_req/1` | Single file with `defmodule Rt` (default) or `-R` / `--separate-runtime` (`--package <ModulePrefix>`) |
+| **Python** | `parsmith generate python` (`py`) | `bs4` (default; `--bs4-parser lxml\|html.parser\|html5lib`), `lxml`, `parsel`, `selectolax` | `TypedDict` (default) or `dataclass` (`--models`); `rt_project_*` allowlist projectors | `SyncTransport` / `AsyncTransport` (`via_httpx`, `via_httpx_async`, `via_requests`, `via_aiohttp`, `via_urllib`); `--http-io both\|sync\|async` | Single file (default) or `-R` / `--separate-runtime` |
+| **TypeScript** | `parsmith generate ts` (`typescript`) | Standard Web DOM (`DOMParser`, `querySelectorAll`, `document.evaluate`) | Exported `interface` definitions + `rtProject*` allowlist projectors | `SyncTransport` / `AsyncTransport` (`viaFetch`, `viaAxios`) | Standalone `.ts` module |
+| **JavaScript** | `parsmith generate js` (`javascript`) | Standard Web DOM (`DOMParser`, `querySelectorAll`, `document.evaluate`) | ESM `.js` + companion `.d.ts` TypeScript declarations + `rtProject*` projectors | `SyncTransport` / `AsyncTransport` (`viaFetch`, `viaAxios`) | Dual `.js` + `.d.ts` files |
+| **Go** | `parsmith generate go` (`golang`) | `goquery` (`github.com/PuerkitoBio/goquery`) | Typed `struct` + `gjson` allowlist `UnmarshalJSON` | Standard `*http.Client` (`net/http`) + `WithHeader` / `WithParam` / `WithCookie` / `WithTimeout` | Single file (default) or `-R` / `--separate-runtime` (`--package <pkg>`) |
+| **Rust** | `parsmith generate rust` (`rs`) | `dom_query` | `#[derive(Serialize)]` `struct` + `serde_json` `rt::project_*` allowlist projectors | `&reqwest::Client` (async `reqwest`) + `rt::HttpOption` | Single file with `pub mod rt` (default) or `-R` / `--separate-runtime` |
+| **Elixir** | `parsmith generate elixir` (`ex`) | `Floki` (`Floki.parse_document!/1`, `Floki.find/2`) | `defstruct` + `@derive JSON.Encoder` + `Rt.project_*` allowlist projectors | Built-in OTP `:httpc` (`Rt.via_httpc/1`) + `Rt.via_req/1` | Single file with `defmodule Rt` (default) or `-R` / `--separate-runtime` (`--package <ModulePrefix>`) |
 | **PHP 8.1+** | `parsmith generate php` | `--html-lib native` (default; zero-Composer `\DOMDocument` + `\DOMXPath` via compile-time CSS3-to-XPath 1.0 lowering) or `dom-crawler` (`Symfony\Component\DomCrawler\Crawler`) | `readonly class` (`\JsonSerializable`) + `Rt::project*` allowlist projectors | `SyncTransport` (`Rt::viaCurl()`, `Rt::viaStream()`, `Rt::viaGuzzle($client)`) | Single file with `final class Rt` (default) or `-R` / `--separate-runtime` (`--package <Namespace>`) |
-| **C# (.NET 8+)** | `parsmith generate csharp` | `AngleSharp` + conditional `AngleSharp.XPath` | `public sealed record` + `System.Text.Json` `Rt.Project*` allowlist projectors | `System.Net.Http.HttpClient` + `Rt.HttpOption` (`Rt.WithHeader`, `Rt.WithParam`, `Rt.WithCookie`, `Rt.WithTimeout`) | Single file with `public static partial class Rt` (default) or `-R` / `--separate-runtime` (`--package <Namespace>`) |
-| **Kotlin (JVM)** | `parsmith generate kotlin` | `org.jsoup:jsoup` (CSS & XPath) | `data class` (`Rt.JsonEncodable`) + `kotlinx.serialization.json` `Rt.project*` projectors | `java.net.http.HttpClient` + `Rt.HttpOption` (`Rt.withHeader`, `Rt.withParam`, `Rt.withCookie`, `Rt.withTimeout`) | Single file with `object Rt` (default) or `-R` / `--separate-runtime` (`--package <pkg>`) |
+| **C# (.NET 8+)** | `parsmith generate csharp` (`cs`) | `AngleSharp` + conditional `AngleSharp.XPath` | `public sealed record` + `System.Text.Json` `Rt.Project*` allowlist projectors | `System.Net.Http.HttpClient` + `Rt.HttpOption` (`Rt.WithHeader`, `Rt.WithParam`, `Rt.WithCookie`, `Rt.WithTimeout`) | Single file with `public static partial class Rt` (default) or `-R` / `--separate-runtime` (`--package <Namespace>`) |
+| **Kotlin (JVM)** | `parsmith generate kotlin` (`kt`) | `org.jsoup:jsoup` (CSS & XPath) | `data class` (`Rt.JsonEncodable`) + `kotlinx.serialization.json` `Rt.project*` projectors | `java.net.http.HttpClient` + `Rt.HttpOption` (`Rt.withHeader`, `Rt.withParam`, `Rt.withCookie`, `Rt.withTimeout`) | Single file with `object Rt` (default) or `-R` / `--separate-runtime` (`--package <pkg>`) |
 
 ### Eliminating the "Python Sidecar" in Backend Ecosystems
 
