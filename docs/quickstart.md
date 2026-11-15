@@ -168,7 +168,7 @@ parsmith generate go books.kdl --package catalog -o catalog.go
 # Rust (dom_query + serde)
 parsmith generate rust books.kdl -o catalog.rs
 
-# Elixir 1.18+ (Floki + built-in JSON + OTP :httpc)
+# Elixir 1.18–1.20+ on Erlang/OTP 27–29 (Floki + built-in JSON + OTP :httpc)
 parsmith generate elixir books.kdl -o catalog.ex
 
 # PHP 8.1+ (default: zero-Composer native DOMDocument + DOMXPath; or --html-lib dom-crawler)

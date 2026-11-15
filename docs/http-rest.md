@@ -1,6 +1,6 @@
 # HTTP Requests (`@request`) & Typed REST Clients (`(rest)struct`)
 
-`parsmith` compiles raw HTTP requests and POSIX `curl` commands directly into typed network constructors and monadic REST API clients across Python, TypeScript, JavaScript, Go, Rust, Elixir, PHP 8.1+, C# (.NET 8+), and Kotlin (JVM).
+`parsmith` compiles raw HTTP requests and POSIX `curl` commands directly into typed network constructors and monadic REST API clients across Python, TypeScript, JavaScript, Go, Rust, Elixir 1.18+ (Erlang/OTP 27–29), PHP 8.1+, C# (.NET 8+), and Kotlin (JVM).
 
 ---
 

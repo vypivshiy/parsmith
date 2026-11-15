@@ -45,7 +45,7 @@ This directory contains the user guide, language reference, runtime specificatio
 
 ## Target Capabilities Overview
 
-| Capability | Python (`python`) | TypeScript (`ts`) | JavaScript (`js`) | Go (`go`) | Rust (`rust`) | Elixir (`elixir`) | PHP 8.1+ (`php`) | C# (`csharp`) | Kotlin (`kotlin`) |
+| Capability | Python (`python`) | TypeScript (`ts`) | JavaScript (`js`) | Go (`go`) | Rust (`rust`) | Elixir 1.18+ / OTP 27–29 (`elixir`) | PHP 8.1+ (`php`) | C# (`csharp`) | Kotlin (`kotlin`) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **DOM Backends** | `bs4` (default), `lxml`, `parsel`, `selectolax` | Web DOM (`DOMParser`, `querySelectorAll`) | Web DOM (`DOMParser`, `querySelectorAll`) | `goquery` | `dom_query` | `Floki` | `native` (`\DOMDocument` + `\DOMXPath`, default) or `dom-crawler` | `AngleSharp` + `AngleSharp.XPath` | `org.jsoup:jsoup` |
 | **CSS3/4 Selectors** | Supported (all 4 backends) | Supported | Supported | Supported | Supported | Supported (CSS3) | CSS3 lowered to XPath 1.0 in `native` (`E002` on CSS4); CSS3/4 in `dom-crawler` | Supported | Supported |

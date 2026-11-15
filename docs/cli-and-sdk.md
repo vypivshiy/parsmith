@@ -201,7 +201,7 @@ parsmith generate rust <path.kdl> [-o <file_or_dir>] [-R] [--runtime-name <NAME>
 
 #### `parsmith generate elixir` (alias: `ex`)
 
-Generates Elixir 1.18+ parsers (`Floki` + built-in `JSON`) and REST clients (`:httpc` + `Rt.via_req/1`). Automatically omits `Floki` helpers when the schema has no HTML constructs.
+Generates Elixir 1.18–1.20+ parsers (`Floki` + built-in standard `JSON`) and REST clients (Erlang/OTP 27–29 `:httpc` + `Rt.via_req/1`). Automatically omits `Floki` helpers when the schema has no HTML constructs.
 
 ```bash
 parsmith generate elixir <path.kdl> [-o <file_or_dir>] [--package <PREFIX>] [-R] [--runtime-name <NAME>] [--prologue <CODE>] [--epilogue <CODE>] [-f text|json]
