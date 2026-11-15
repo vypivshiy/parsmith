@@ -1,0 +1,101 @@
+@doc "Hacker News (https://news.ycombinator.com) — (list)struct, nested structs, and @request."
+
+define HN-BASE="https://news.ycombinator.com"
+
+(list)struct News {
+    @split-doc { css-all ".submission" }
+
+    title { css ".title > .titleline > a"; text; trim }
+    url   { css ".title > .titleline > a[href]"; attr "href" }
+    id    { attr "id"; to-int; fallback #null }
+    rank {
+        css ".rank"
+        text
+        re-sub #"\D"# ""
+        to-int
+    }
+    votelink {
+        css ".votelinks a[href]"
+        attr "href"
+        fmt "{{HN-BASE}}/{{}}"
+        fallback #null
+    }
+}
+
+(list)struct Rating {
+    @split-doc { css-all "tr > .subtext > .subline" }
+
+    date      { css "span.age[title]"; attr "title"; fallback #null }
+    date-text { css "span.age[title]"; text; fallback #null }
+    url       { css "a[href^='item?']"; attr "href"; fmt "{{HN-BASE}}/{{}}" }
+    author {
+        css "a.hnuser[href]"
+        attr "href"
+        fmt "{{HN-BASE}}/{{}}"
+        fallback #null
+    }
+    score {
+        css "span.score[id^='score_']"
+        text
+        re-sub #"\D"# ""
+        to-int
+        fallback 0
+    }
+    comments {
+        css "a[href^='item?']"
+        text
+        re-sub #"\D"# ""
+        to-int
+        fallback 0
+    }
+}
+
+struct MainPage {
+    @request "curl 'https://news.ycombinator.com?p={{page_num:int?}}'"
+
+    news    { nested News }
+    ratings { nested Rating }
+}
+
+(list)struct Comments {
+    @split-doc { css-all "table.comment-tree tr.comtr[id] > td > table" }
+
+    indent    { css ".ind[indent]"; attr "indent"; to-int; fallback 0 }
+    user      { css ".comhead > a.hnuser"; text }
+    user-url  { css ".comhead > a.hnuser[href]"; attr "href" }
+    date      { css ".comhead .age[title]"; attr "title"; fallback #null }
+    date-text { css ".comhead .age[title] > a[href^='item?']"; text; fallback #null }
+    text      { css ".default > .comment > .commtext"; text; trim }
+    reply {
+        css ".reply a[href]"
+        attr "href"
+        fmt "{{HN-BASE}}/{{}}"
+        fallback #null
+    }
+}
+
+struct MainDiscussionPage {
+    @request "curl 'https://news.ycombinator.com/item?id={{id:int}}'"
+
+    title     { css ".titleline > a"; text; trim }
+    url       { css ".titleline > a[href]"; attr "href" }
+    user      { css ".subline .hnuser"; text }
+    user-url  { css ".subline .hnuser[href]"; attr "href"; fmt "{{HN-BASE}}/{{}}" }
+    date      { css ".subline .age[title]"; attr "title" }
+    date-text { css ".subline .age[title] > a[href^='item?']"; text }
+    score {
+        css ".subline > .score"
+        text
+        re-sub #"\D"# ""
+        to-int
+        fallback 0
+    }
+    comments-count {
+        css ".subline > a[href^='item?']"
+        text
+        re-sub #"\D"# ""
+        to-int
+        fallback 0
+    }
+    comments { nested Comments }
+}

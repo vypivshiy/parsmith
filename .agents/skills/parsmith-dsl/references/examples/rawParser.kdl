@@ -1,0 +1,54 @@
+@doc "Plain-text extraction with (raw)struct: JS player configs, URL query strings, m3u8 playlists, and CSV rows."
+
+(raw)struct PlayerScript {
+    playlist_url { re #"Playerjs\([^)]*file:\s*[\"']([^\"']+)[\"']"# }
+    player_id    { re #"Playerjs\([^)]*id:\s*[\"']([^\"']+)[\"']"#; fallback #null }
+}
+
+(raw)struct AnimeParams {
+    @doc "Parse query string: ?dubbing_code=Sanae&anime_id=339&episode=1"
+    @init {
+        pairs { split "?"; index 1; split "&" }
+    }
+
+    dubbing_code {
+        @pairs
+        filter { starts "dubbing_code=" }
+        first
+        rm-prefix "dubbing_code="
+    }
+    anime_id {
+        @pairs
+        filter { starts "anime_id=" }
+        first
+        rm-prefix "anime_id="
+        to-int
+    }
+    episode {
+        @pairs
+        filter { starts "episode=" }
+        first
+        rm-prefix "episode="
+        to-int
+    }
+}
+
+(raw)struct M3u8Playlist {
+    @split-doc { split "\n" }
+
+    quality { re #"\[(\d+p)\]"# }
+    url     { re #"\](.+)"#; trim }
+}
+
+(raw)struct CsvLines {
+    @split-doc { split "\n" }
+    @init { cols { split "," } }
+
+    col_0 { @cols; index 0; trim }
+    col_1 { @cols; index 1; trim }
+}
+
+(raw)struct RemotePlaylist {
+    @request "curl '{{playlist_url}}'"
+    stream_url { re #"^(https?://[^\s]+)"# }
+}

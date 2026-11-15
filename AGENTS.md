@@ -32,6 +32,10 @@ cd playground && npm run build:wasm && npm test -- --run && npm run build
 
 ## Agent skills
 
+### KDL Schema DSL (`parsmith-dsl`)
+
+Authoring, combining, validating, and compiling `.kdl` (KDL 2.0 Schema DSL v2.1) files across all 9 targets. See `.agents/skills/parsmith-dsl/SKILL.md`.
+
 ### Issue tracker
 
 Issues and specs live as local markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.

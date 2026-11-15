@@ -1,0 +1,30 @@
+@doc "Quotes to Scrape JS — Extracting inline JS variables via (?xs) verbose regex + jsonify."
+
+json Author {
+    name str
+    goodreads_link str
+    slug str
+}
+
+(array)json Quote {
+    tags (array)str
+    tag_count int from="tags.#"
+    author Author
+    text str
+}
+
+define EXTRACT-JS-ARRAY {
+    raw
+    re #"""
+        (?xs)
+        var\s+data\s*=\s*     # START ANCHOR: var data =
+        ( \[ .* \] )          # CAPTURE GROUP 1: JSON array
+        ;\s+for               # END ANCHOR: ; for
+    """#
+}
+
+struct Main {
+    data          { EXTRACT-JS-ARRAY; jsonify Quote }
+    first-author  { EXTRACT-JS-ARRAY; jsonify Author path="0.author" }
+    second-author { EXTRACT-JS-ARRAY; jsonify Author path="1.author" }
+}

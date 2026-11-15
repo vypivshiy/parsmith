@@ -1,0 +1,29 @@
+@doc "Resilient regex extraction: `re` + `fallback` (`RtRegexError` recovery), `re-all`, and `re-sub`."
+
+struct ProductPage {
+    title           { css ".title"; text; trim; fallback "(unknown title)" }
+    mentioned-years { css ".description"; text; re-all #"(\d{4})"#; to-int }
+
+    year {
+        css ".meta"
+        text
+        re #"(\d{4})"#                 // 1 capture group required by Portable regex subset
+        to-int
+        fallback 0                     // RtRegexError suppressed if no year in text
+    }
+    views {
+        css ".stats"
+        text
+        re #"(\d+(?:,\d{3})*)"#        // matches "1,234,567" (non-capturing inner group)
+        re-sub #","# ""                // strip thousands separators
+        to-int
+        fallback 0
+    }
+    price {
+        css ".price"
+        text
+        re #"(\d+\.\d{2})"#
+        to-float
+        fallback 0.0                   // regex miss or missing node -> 0.0
+    }
+}

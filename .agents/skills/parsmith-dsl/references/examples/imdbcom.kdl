@@ -1,0 +1,38 @@
+@doc "IMDb Search Page — Hybrid DOM scraping + __NEXT_DATA__ embedded JSON projection with inline hoisting."
+
+(list)struct FindPageResults {
+    @split-doc { css-all "ul.ipc-metadata-list > li.ipc-metadata-list-summary-item" }
+
+    image     { css "img.ipc-image[src]"; attr "src"; fallback #null }
+    image-alt { css "img.ipc-image[alt]"; attr "alt"; fallback #null }
+    title     { css "a.ipc-metadata-list-summary-item__t"; text; trim }
+    url       { css "a.ipc-metadata-list-summary-item__t[href]"; attr "href"; fmt "https://www.imdb.com{{}}" }
+    year {
+        css "ul.ipc-metadata-list-summary-item__tl > li:first-child > span"
+        text
+        re-sub #"\D"# ""
+        to-int
+        fallback #null
+    }
+}
+
+json Content {
+    has_exact_matches bool from="hasExactMatches"
+    results (array)SearchResult {
+        id str
+        title str from="titleNameText"
+        release_year str from="titleReleaseText"
+        poster from="titlePosterImageModel" {
+            url str
+            max_height int from="maxHeight"
+            max_width int from="maxWidth"
+        }
+        top_credits (array)str from="topCredits"
+        series_id str? from="seriesId" @omitempty
+    }
+}
+
+struct SearchPage {
+    json-parse     { css "script#__NEXT_DATA__"; raw inner; jsonify Content path="props.pageProps.titleResults" }
+    selector-parse { nested FindPageResults }
+}

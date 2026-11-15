@@ -1,0 +1,74 @@
+@doc "DummyJSON REST client: inline JSON hoisting, `(array)json`, GJSON projection, array query styles, and `@error` dispatch."
+
+define API-BASE="https://dummyjson.com"
+define SEARCH-REQ="curl '{{API-BASE}}/products/search?q={{query}}&limit={{limit:int?}}' -H 'Accept: application/json'"
+
+json Product {
+    id int
+    title str
+    price float
+    discount_pct float from="discountPercentage"
+    brand str? @omitempty
+    tags (array)str
+    reviewer_names (array)str from="reviews.#.reviewerName"
+    dimensions @omitempty {
+        width float
+        height float
+        depth float
+    }
+    reviews (array)Review {
+        rating int
+        comment str
+        reviewer_email str from="reviewerEmail"
+    }
+}
+
+json ProductList {
+    products (array)Product
+    total int
+    skip int
+    limit int
+}
+
+(array)json CategoryList {
+    slug str
+    name str
+    url str
+}
+
+json ApiError { message str }
+json ActionResponse { success bool; message str }
+
+(rest)struct DummyJsonApi {
+    @request name="get-product" response="Product" #"""
+    GET /products/{{id:int}} HTTP/1.1
+    Host: dummyjson.com
+    Accept: application/json
+    """#
+
+    @request name="list-products" response="ProductList" #"""
+    GET /products?limit={{limit:int?}}&skip={{skip:int?}}&select={{fields:str[]?|csv}} HTTP/1.1
+    Host: dummyjson.com
+    Accept: application/json
+    """#
+
+    @request name="search-products" response="ProductList" SEARCH-REQ
+
+    @request name="list-categories" response="CategoryList" #"""
+    GET /products/categories HTTP/1.1
+    Host: dummyjson.com
+    Accept: application/json
+    """#
+
+    @request name="create-product" response="Product" #"""
+    POST /products/add HTTP/1.1
+    Host: dummyjson.com
+    Content-Type: application/json
+
+    {"title": "{{title}}", "price": {{price:float}}, "stock": {{stock:int}}}
+    """#
+
+    @error:not-found 404 ApiError message="Product not found"
+    @error 404 ApiError
+    @error 200 ActionResponse success=#false
+}
