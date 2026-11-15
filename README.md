@@ -1,8 +1,8 @@
 # parsmith
 
-`parsmith` is a universal Rust compiler, static linter, and multi-target code generation engine for the **KDL 2.0 Schema DSL (v2.1)** covering HTML DOM scraping, plain-text extraction, embedded JSON projection, and typed REST/JSON HTTP clients.
+`parsmith` is a multi-target **code generator and static linter** (written in Rust) for the **KDL 2.0 Schema DSL (v2.1)** covering HTML DOM scraping, plain-text extraction, embedded JSON projection, and typed REST/JSON HTTP clients.
 
-It compiles declarative `.kdl` schemas through a 5-pass pure-Rust frontend (`SourceLoader` filesystem and in-memory VFS, explicit `import` resolution, `E000`–`E403` / `W011`–`W041` static linting, **Algebraic AST** lowering, and pipeline type checking) into standalone, zero-framework source code across 9 targets: **Python**, **TypeScript**, **JavaScript (ESM + `.d.ts`)**, **Go**, **Rust**, **Elixir**, **PHP 8.1+ (`native` & `dom-crawler`)**, **C# (.NET 8+)**, and **Kotlin (JVM)**.
+It validates declarative `.kdl` schemas (`SourceLoader` filesystem and in-memory VFS, explicit `import` resolution, `E000`–`E403` / `W011`–`W041` static linting, **Algebraic AST** lowering, and pipeline type checking) and generates standalone, zero-framework source code across 9 targets: **Python**, **TypeScript**, **JavaScript (ESM + `.d.ts`)**, **Go**, **Rust**, **Elixir**, **PHP 8.1+ (`native` & `dom-crawler`)**, **C# (.NET 8+)**, and **Kotlin (JVM)**.
 
 [Why `parsmith`?](#why-parsmith) · [End-to-End Showcase](#end-to-end-showcase) · [Target Matrix & Ecosystem Fit](#target-matrix--ecosystem-fit) · [Tooling, SDKs & Selector Health](#tooling-host-sdks--selector-health-check) · [Documentation](#documentation) · [Architecture & Development](#workspace-architecture--development-workflow)
 
@@ -17,27 +17,27 @@ Writing scrapers or API extractors directly in imperative code—or asking an LL
 1. **Contract Drift & Inconsistent Edge-Case Handling**
    Ask an engineer or an LLM to write 30 parsers and you get 30 incompatible implementations. One crashes with `AttributeError` when `.select_one()` returns `None` on a card without a discount badge; a second swallows failures via `except Exception: pass`; a third returns `"19.99"` instead of `float`; a fourth passes undeclared keys from raw JSON straight into the database.
 2. **Token Budget & Signal-to-Noise Ratio (`20 lines of KDL` vs. `600 lines of code`)**
-   A 20-line `.kdl` schema contains 100% domain logic: selectors, transformations, target types, fallbacks, and JSON wire contracts. The compiled output—complete with static model types, `rt_project_*` allowlist JSON projectors, monadic REST error variants (`Ok`, `DecodeErr`, `TransportErr`, `@error`), and HTTP transport adapters—spans 300–700 lines. For both human reviewers and AI coding agents, reading and patching 20 lines of declarative KDL is 15–20x cheaper, faster, and less error-prone than maintaining 600 lines of imperative Go or Rust.
+   A 20-line `.kdl` schema contains 100% domain logic: selectors, transformations, target types, fallbacks, and JSON wire contracts. The generated module—complete with static model types, `rt_project_*` allowlist JSON projectors, monadic REST error variants (`Ok`, `DecodeErr`, `TransportErr`, `@error`), and HTTP transport adapters—spans 300–700 lines. For both human reviewers and AI coding agents, reading and patching 20 lines of declarative KDL is 15–20x cheaper, faster, and less error-prone than maintaining 600 lines of imperative Go or Rust.
 3. **Library-Specific Hallucinations Across Stacks**
    In Python alone, `bs4`, `lxml`, `parsel`, and `selectolax` differ in text concatenation, attribute lookup, and in-place DOM removal semantics (`css-remove`). Go (`goquery`), Rust (`dom_query`), Elixir (`Floki`), C# (`AngleSharp`), Kotlin (`Jsoup`), and PHP (`\DOMXPath` vs. `DomCrawler`) each have their own DOM quirks, while HTTP clients (`httpx`, `requests`, `aiohttp`, `fetch`, `net/http`, `reqwest`, `:httpc`) raise incompatible exceptions. LLMs routinely hallucinate method signatures on non-mainstream DOM libraries and cannot maintain behavioral parity across languages by hand.
 4. **Inability to Statically Inspect Imperative Code**
-   When a parser is written as arbitrary Python or JS code, you cannot reliably extract all selectors without executing it. Because a `parsmith` schema compiles to an **Algebraic AST**, `inspect_schema` and the `parsmith-wasm` **Selector health check** statically extract every CSS/XPath step and its terminal `fallback` clause, validating selector health against a fresh HTML snapshot in milliseconds.
+   When a parser is written as arbitrary Python or JS code, you cannot reliably extract all selectors without executing it. Because a `parsmith` schema lowers to a typed **Algebraic AST**, `inspect_schema` and the `parsmith-wasm` **Selector health check** statically extract every CSS/XPath step and its terminal `fallback` clause, validating selector health against a fresh HTML snapshot in milliseconds.
 
-### Three Compiler Guarantees
+### Three Core Guarantees
 
-Every constraint in `parsmith`—the 5-pass compiler, diagnostic codes `E000`–`E403`, strict pipeline type checking, the **Portable regex subset**, and deterministic **GJSON path expressions**—serves three concrete guarantees:
+Every constraint in `parsmith`—static validation (`E000`–`E403`), strict pipeline type checking, the **Portable regex subset**, and deterministic **GJSON path expressions**—serves three concrete guarantees:
 
 1. **Instant Static Oracle (`parsmith check`)**
    Type mismatches in imperative scrapers (such as calling string `.strip()` on an element list before extracting text, or omitting a default value on a nullable field) only surface at runtime on live data. `parsmith check` statically verifies pipeline step types (`DOCUMENT`, `STRING`, `INT`, `FLOAT`, `BOOL`, arrays), CSS3/4 selector syntax, XPath 1.0 queries, GJSON paths, and regex capture group counts before generating code. For AI agents, this provides a deterministic feedback loop: *generate `.kdl` $\to$ run `parsmith check` $\to$ fix exact line/column diagnostic in one iteration*.
 2. **Bitwise Cross-Target Parity**
-   `parsmith` restricts regular expressions to a **Portable regex subset** (forbidding lookarounds `(?=...)` and named capture groups, requiring exactly one capture group in `re` / `re-all` steps so patterns execute in linear $O(N)$ time on Go `regexp` and Rust `regex` as well as PCRE/ECMA engines) and uses deterministic **GJSON path expressions** instead of arbitrary script filters. Any schema that passes `parsmith check` compiles unmodified across all 9 targets and produces identical extracted data structures on the same input fixture—letting you prototype in Python or the browser WASM playground and deploy native Rust, Go, or Elixir code to production.
+   `parsmith` restricts regular expressions to a **Portable regex subset** (forbidding lookarounds `(?=...)` and named capture groups, requiring exactly one capture group in `re` / `re-all` steps so patterns execute in linear $O(N)$ time on Go `regexp` and Rust `regex` as well as PCRE/ECMA engines) and uses deterministic **GJSON path expressions** instead of arbitrary script filters. Any schema that passes `parsmith check` generates code across all 9 targets and produces identical extracted data structures on the same input fixture—letting you prototype in Python or the browser WASM playground and deploy native Rust, Go, or Elixir code to production.
 3. **Zero-Runtime Dependency & Sandboxed Execution**
    - **Safe AI self-healing (No RCE)**: If an AI agent automatically generates or repairs parsers when a target website changes its layout, executing LLM-generated Python or JS code in production is a direct Remote Code Execution (RCE) vector. A `.kdl` schema (without explicit user `extension` hooks) is declarative and Turing-incomplete: it cannot execute system calls, access the filesystem, or enter infinite loops.
-   - **Self-contained output (`rt` namespace)**: Generated code does not require `parsmith` or a heavy scraping framework at runtime. A two-pass compiler (`DryRun` + `ModuleBuilder` + `CodeWriter`) emits only the exact subset of lightweight `rt` helpers and allowlist JSON projectors actually used by the schema.
+   - **Self-contained output (`rt` namespace)**: Generated code does not require `parsmith` or a heavy scraping framework at runtime. Two-pass code generation (`DryRun` + `ModuleBuilder` + `CodeWriter`) emits only the exact subset of lightweight `rt` helpers and allowlist JSON projectors actually used by the schema.
 
 >[!tip]
 >**When `parsmith` Is (and Isn't) the Right Tool**
->- **When plain `bs4` or `cheerio` is enough**: If you are writing a one-off, throwaway script in 30 lines of Python or JavaScript to scrape a single page once, a schema compiler is overkill—write imperative code directly.
+>- **When plain `bs4` or `cheerio` is enough**: If you are writing a one-off, throwaway script in 30 lines of Python or JavaScript to scrape a single page once, a schema code generator is overkill—write imperative code directly.
 >- **When `parsmith` is built for the job**: Long-term support (**LTS**) data pipelines where contracts must stay stable across dozens or hundreds of evolving sources; AI-driven scraper generation and automated selector repair; strict allowlist projection of noisy embedded/REST JSON; or executing parsers natively inside **Go, Rust, Elixir, C#, Kotlin, or PHP** services without running a separate Python microservice sidecar.
 
 ---
@@ -83,7 +83,7 @@ struct CatalogPage {
 }
 ```
 
-Validate and compile to any target:
+Validate and generate code for any target:
 
 ```bash
 parsmith check catalog.kdl
@@ -141,7 +141,7 @@ IO.puts("#{data.heading}: #{hd(data.products).seller.store_name}")
 
 #### Under the Hood: What `parsmith` Synthesizes
 
-From the 20-line `.kdl` schema above, the 2-pass compiler (`DryRun` + `Emit`) generates a self-contained module with four layers of boilerplate handled automatically:
+From the 20-line `.kdl` schema above, the 2-pass code generator (`DryRun` + `Emit`) produces a self-contained module with four layers of boilerplate handled automatically:
 
 ```text
 // 1. Static Output & Wire Models (TypedDict / dataclass / interface / struct / record / data class)
@@ -182,7 +182,7 @@ struct ProductCard(doc):
 
 ### 2. Typed REST Clients & Error Discriminators (`catalog_api.kdl`)
 
-A `(rest)struct` compiles POSIX `curl` commands or raw HTTP templates into a strongly-typed REST client whose methods **never throw uncaught exceptions** on HTTP errors, network failures, or JSON schema mismatches. Every call resolves to a discriminated `Result` (`Ok`, typed `<Struct>Err<Status>[<Suffix>]`, `DecodeErr`, `TransportErr`, or `UnknownErr`):
+A `(rest)struct` turns POSIX `curl` commands or raw HTTP templates into a strongly-typed REST client whose methods **never throw uncaught exceptions** on HTTP errors, network failures, or JSON schema mismatches. Every call resolves to a discriminated `Result` (`Ok`, typed `<Struct>Err<Status>[<Suffix>]`, `DecodeErr`, `TransportErr`, or `UnknownErr`):
 
 ```kdl
 define API-BASE="https://api.example.com/v1"
@@ -289,7 +289,7 @@ OpenAPI (Swagger) and `parsmith` solve opposite ends of the API lifecycle:
 
 ## Target Matrix & Ecosystem Fit
 
-A single `.kdl` schema compiles to idiomatic, type-checked source code across nine targets:
+A single `.kdl` schema generates idiomatic, type-checked source code across nine targets:
 
 | Target | CLI Subcommand (& Alias) | HTML / DOM Backend | Models & JSON Projectors | HTTP & REST Transport | Runtime Options |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -307,7 +307,7 @@ A single `.kdl` schema compiles to idiomatic, type-checked source code across ni
 
 In Python and JavaScript, scraping libraries are ubiquitous. In compiled and enterprise server ecosystems, teams face two acute problems: (1) maintaining a separate Python microservice sidecar just to parse a few dozen HTML/REST sources is operationally expensive, and (2) LLMs produce brittle code for less common DOM libraries (`Floki`, `dom_query`, `AngleSharp`, `\DOMXPath`).
 
-Because `parsmith`'s core pipeline operations form a closed **Algebraic AST**, the compiler translates a single `.kdl` schema into idiomatic native code for each runtime:
+Because `parsmith`'s core pipeline operations form a closed **Algebraic AST**, the code generator translates a single `.kdl` schema into idiomatic native code for each runtime:
 
 - **Elixir (`Floki` + BEAM)**: Built for high-concurrency data pipelines (Oban, Broadway, GenStage). `Floki`'s HTML tree is immutable (`Floki.filter_out/2` handles `css-remove` cleanly without mutating shared DOM nodes in place), REST endpoints return native `{:ok, %Struct{}} | {:error, %Rt.DecodeErr{}}` tuples for pattern matching, and `@type` specifications integrate directly with Dialyzer.
 - **PHP 8.1+ (Compile-Time CSS3-to-XPath 1.0 Lowering)**: PHP's standard `ext-dom` (`\DOMDocument` + `\DOMXPath`) on PHP 8.1–8.3 natively evaluates XPath 1.0 but lacks CSS selector queries. `parsmith`'s default `php --html-lib native` backend compiles CSS3 selectors into deterministic XPath 1.0 expressions at compile time—enabling zero-Composer HTML and JSON extraction out of the box (or targeting `symfony/dom-crawler` via `--html-lib dom-crawler` when CSS4 selectors are needed).
@@ -346,12 +346,12 @@ parsmith check schemas/catalog.kdl -f json
 
 When a target site changes its markup, `parsmith` does not require executing target parsers to diagnose broken selectors:
 
-- **`inspect_schema` / `inspectSchema`**: Runs the 5-pass compiler and returns a structured `ModuleInfo` tree exposing all structs, inferred field types (`TypeInfo`), `json` definitions, REST endpoints, and `@error` matchers.
+- **`inspect_schema` / `inspectSchema`**: Runs the 5-pass frontend and returns a structured `ModuleInfo` tree exposing all structs, inferred field types (`TypeInfo`), `json` definitions, REST endpoints, and `@error` matchers.
 - **Selector Health Check (`parsmith-wasm`)**: Statically walks a `struct` and all transitive `nested` references to extract every `css`, `css-all`, `css-remove`, `xpath`, `xpath-all`, and `xpath-remove` step along with its terminal `fallback` clause, evaluating each selector against a sample HTML document in the browser to classify it as `ok`, `warn` (matched 0 elements but protected by `fallback`), or `fail`.
 
 ### 4. Embedded Host SDKs & In-Memory VFS (`parsmith-py` & `parsmith-js`)
 
-Embed the compiler directly in Python (`PyO3` `abi3`) or Node.js/TypeScript (`napi-rs`) without spawning CLI subprocesses or touching the filesystem (`MemorySourceLoader`):
+Embed the linter and code generator directly in Python (`PyO3` `abi3`) or Node.js/TypeScript (`napi-rs`) without spawning CLI subprocesses or touching the filesystem (`MemorySourceLoader`):
 
 ```python
 import parsmith
@@ -373,6 +373,20 @@ res = parsmith.generate("scrapers/card.kdl", target="rust", sources=vfs)
 assert res.ok
 rust_source: str = res["card.rs"]
 ```
+
+### 5. Bundled Skill for AI Coding Agents (`.agents/skills/parsmith-dsl`)
+
+`parsmith` ships an agent skill directly in the repository at [`.agents/skills/parsmith-dsl/`](.agents/skills/parsmith-dsl/SKILL.md) (including progressive-disclosure reference guides in `references/` and verified `.kdl` examples in `references/examples/`).
+
+To enable `parsmith-dsl` in your own project for Claude Code, OpenCode, Cursor, or Codex agents, copy the skill directory into your workspace (or global skills folder):
+
+```bash
+# Copy into your project's agent skills directory (.agents/skills/ or .claude/skills/)
+mkdir -p .agents/skills
+cp -r path/to/parsmith/.agents/skills/parsmith-dsl .agents/skills/
+```
+
+For single-file context injection (system prompts, custom GPTs, or API tool loops without skill directories), pass [`docs/llm.txt`](docs/llm.txt) directly.
 
 ---
 
@@ -396,6 +410,7 @@ Full user guides, language specifications, and architectural references live in 
   - [CLI & Host SDKs (`cli-and-sdk.md`)](docs/cli-and-sdk.md)
   - [End-to-End Extraction Recipes (`recipes.md`)](docs/recipes.md)
   - [Linter & Compiler Diagnostics (`diagnostics.md`)](docs/diagnostics.md)
+  - [Bundled Agent Skill (`.agents/skills/parsmith-dsl/`)](.agents/skills/parsmith-dsl/SKILL.md)
   - [Single-File LLM Reference (`llm.txt`)](docs/llm.txt)
 - **Architecture & Domain Model**
   - [Domain Context & Glossary (`CONTEXT.md`)](CONTEXT.md)
@@ -409,10 +424,10 @@ Full user guides, language specifications, and architectural references live in 
 
 | Crate | Role |
 | :--- | :--- |
-| `crates/parsmith` | Standalone native CLI (`parsmith`) and pure-Rust 5-pass compiler (`parsmith::kdl` KDL 2.0 document tree, selector engine, and serializer; `SourceLoader` FS + in-memory VFS; explicit imports; `E000`–`E403` / `W011`–`W041` linters; CSS3/4 + XPath 1.0 + CSS3-to-XPath 1.0 lowering + Portable regex subset + GJSON path validators; `json-to-kdl`; Algebraic AST; 2-pass `CodeWriter` + `ModuleBuilder` + `LanguageEmitter`; and 9 target emitters). |
+| `crates/parsmith` | Standalone native CLI (`parsmith`) and pure-Rust 5-pass validation and codegen library (`parsmith::kdl` KDL 2.0 document tree, selector engine, and serializer; `SourceLoader` FS + in-memory VFS; explicit imports; `E000`–`E403` / `W011`–`W041` linters; CSS3/4 + XPath 1.0 + CSS3-to-XPath 1.0 lowering + Portable regex subset + GJSON path validators; `json-to-kdl`; Algebraic AST; 2-pass `CodeWriter` + `ModuleBuilder` + `LanguageEmitter`; and 9 target emitters). |
 | `crates/parsmith-py` | `PyO3` (`abi3-py310`) / `maturin` Python Host SDK (`check`, `generate`, `inspect_schema`, `json_to_kdl`, VFS `sources`, paired with `python/`). |
 | `crates/parsmith-js` | `napi-rs` Node-API JS/TS Host SDK (`check`, `generate`, `inspectSchema`, `jsonToKdl`, VFS `sources`, paired with `js/`). |
-| `crates/parsmith-wasm` | `wasm-bindgen` WebAssembly browser compiler, `json-to-kdl`, and AST selector health extractor (paired with `playground/`). |
+| `crates/parsmith-wasm` | `wasm-bindgen` WebAssembly browser code generator, `json-to-kdl`, and AST selector health extractor (paired with `playground/`). |
 
 ```bash
 # 1. Format, lint, and test Rust workspace

@@ -1,13 +1,13 @@
 # parsmith Agent Guide
 
-`parsmith` is a universal Rust compiler, linter, and multi-target code generation engine for the KDL 2.0 Schema DSL (v2.1) covering HTML scraping, plain-text extraction, and typed REST/JSON HTTP clients.
+`parsmith` is a multi-target code generator and static linter (written in Rust) for the KDL 2.0 Schema DSL (v2.1) covering HTML scraping, plain-text extraction, and typed REST/JSON HTTP clients.
 
 It is organized as a modular Cargo Workspace:
 
-- `crates/parsmith` — Standalone CLI (`parsmith`) and pure-Rust 5-pass compiler library (`parsmith::kdl` KDL 2.0 document tree, selector engine, and serializer; `SourceLoader` FS + in-memory VFS; explicit imports; `E000`–`E403` / `W011`–`W041` linters; CSS3/4 + XPath 1.0 + CSS3-to-XPath 1.0 lowering + Regex + GJSON validators; `json-to-kdl`; Algebraic AST; 2-pass `CodeWriter` + `LanguageEmitter`; and 9 target backends: Python, TS, JS, Go, Rust, Elixir, PHP, C#, Kotlin).
+- `crates/parsmith` — Standalone CLI (`parsmith`) and pure-Rust 5-pass validation and codegen library (`parsmith::kdl` KDL 2.0 document tree, selector engine, and serializer; `SourceLoader` FS + in-memory VFS; explicit imports; `E000`–`E403` / `W011`–`W041` linters; CSS3/4 + XPath 1.0 + CSS3-to-XPath 1.0 lowering + Regex + GJSON validators; `json-to-kdl`; Algebraic AST; 2-pass `CodeWriter` + `LanguageEmitter`; and 9 target backends: Python, TS, JS, Go, Rust, Elixir, PHP, C#, Kotlin).
 - `crates/parsmith-py` — `PyO3` / `maturin` Python SDK bindings (`check`, `generate`, `inspect_schema`, `json_to_kdl`, VFS support).
 - `crates/parsmith-js` — `napi-rs` Node-API JS/TS SDK bindings (`check`, `generate`, `inspectSchema`, `jsonToKdl`, VFS support, paired with `js/`).
-- `crates/parsmith-wasm` — `wasm-bindgen` WebAssembly browser compiler, `json-to-kdl`, and AST selector health extractor (paired with `playground/`).
+- `crates/parsmith-wasm` — `wasm-bindgen` WebAssembly browser code generator, `json-to-kdl`, and AST selector health extractor (paired with `playground/`).
 
 ## Development Workflow
 
