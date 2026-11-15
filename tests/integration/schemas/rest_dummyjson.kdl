@@ -1,0 +1,133 @@
+@doc """
+Example REST API client config using DummyJSON (https://dummyjson.com).
+"""
+
+json Dimensions {
+    width float
+    height float
+    depth float
+}
+
+json Meta {
+    created_at str from="createdAt"
+    updated_at str from="updatedAt"
+    barcode str
+    qr_code str from="qrCode"
+}
+
+json Review {
+    rating int
+    comment str
+    date str
+    reviewer_name str from="reviewerName"
+    reviewer_email str from="reviewerEmail"
+}
+
+json Product {
+    id int
+    title str
+    description str
+    category str
+    price float
+    discount_percentage float from="discountPercentage"
+    rating float
+    stock int
+    tags (array)str
+    brand str?
+    sku str
+    weight float
+    dimensions Dimensions
+    warranty_information str from="warrantyInformation"
+    shipping_information str from="shippingInformation"
+    availability_status str from="availabilityStatus"
+    reviews (array)Review
+    return_policy str from="returnPolicy"
+    minimum_order_quantity int from="minimumOrderQuantity"
+    meta Meta
+    images (array)str
+    thumbnail str
+}
+
+json ProductList {
+    products (array)Product
+    total int
+    skip int
+    limit int
+}
+
+(array)json CategoryInfo {
+    slug str
+    name str
+    url str
+}
+
+json ApiError {
+    message str
+}
+
+(rest)struct DummyJsonApi {
+    @doc """
+    DummyJSON Products API.
+    """
+
+    @request name=get-product \
+        doc="Fetch one product by id." \
+        response=Product \
+        """
+    GET /products/{{id:int}} HTTP/1.1
+    Host: dummyjson.com
+    Accept: application/json
+    """
+
+    @request name=list-products \
+        doc="Paginated product list. All params optional." \
+        response=ProductList \
+        """
+    GET /products?limit={{limit:int?}}&skip={{skip:int?}}&select={{fields:str[]?|csv}} HTTP/1.1
+    Host: dummyjson.com
+    Accept: application/json
+    """
+
+    @request name=search-products \
+        doc="Full-text search." \
+        response=ProductList \
+        """
+    GET /products/search?q={{query}}&limit={{limit:int?}} HTTP/1.1
+    Host: dummyjson.com
+    Accept: application/json
+    """
+
+    @request name=products-by-category \
+        doc="List products in a category (slug)." \
+        response=ProductList \
+        """
+    GET /products/category/{{category}} HTTP/1.1
+    Host: dummyjson.com
+    Accept: application/json
+    """
+
+    @request name=list-categories \
+        doc="All available category slugs with metadata." \
+        response=CategoryInfo \
+        """
+    GET /products/categories HTTP/1.1
+    Host: dummyjson.com
+    Accept: application/json
+    """
+
+    @request name=create-product \
+        doc="Simulated product creation (not persisted)." \
+        response=Product \
+        """
+    POST /products/add HTTP/1.1
+    Host: dummyjson.com
+    Content-Type: application/json
+    Accept: application/json
+
+    {"title": "{{title}}", "price": {{price:float}}, "stock": {{stock:int}}}
+    """
+
+    @error 400 ApiError
+    @error 404 ApiError
+    @error 500 ApiError
+}

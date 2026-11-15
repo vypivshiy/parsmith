@@ -1,0 +1,137 @@
+---
+source: crates/parsmith/tests/pass4_pass5_and_ast_test.rs
+expression: snapshots
+---
+- case: E000_syntax_error
+  code: E000
+  severity: error
+  line: 2
+  col: 12
+  message: Expected identifier string
+  hint: "In KDL 2.0, `true` is a reserved keyword literal and must be prefixed with `#` (`#true`) or quoted (`\"true\"`)."
+- case: E001_inline_json_hoisting_collision
+  code: E001
+  severity: error
+  line: 5
+  col: 9
+  message: "duplicate json definition 'RootDataValue'"
+  hint: "rename inline schema 'RootDataValue' to avoid collision"
+- case: E002_invalid_css_selector
+  code: E002
+  severity: error
+  line: 2
+  col: 9
+  message: "invalid CSS selector: ':not()' requires arguments"
+  hint: check selector syntax
+- case: E003_missing_import
+  code: E003
+  severity: error
+  line: 1
+  col: 8
+  message: "import: file not found: does_not_exist.kdl"
+  hint: "check that './does_not_exist.kdl' exists relative to the importing file"
+- case: E040_malformed_gjson_path
+  code: E040
+  severity: error
+  line: 2
+  col: 13
+  message: "malformed dot-path 'items.#[id==1]'"
+  hint: "example: val str from=\"profile.avatar.url\""
+- case: E041_duplicate_json_key
+  code: E041
+  severity: error
+  line: 3
+  col: 5
+  message: "duplicate json source key 'wire'"
+  hint: "rename or remove one of the fields mapping to 'wire'"
+- case: E100_pipeline_type_mismatch
+  code: E100
+  severity: error
+  line: 2
+  col: 19
+  message: "'trim' does not accept DOCUMENT; expected STRING"
+  hint: "add 'text', 'raw', or 'attr' before this operation to extract a string"
+- case: E200_unknown_operation
+  code: E200
+  severity: error
+  line: 2
+  col: 19
+  message: "unknown operation 'normlize-space'"
+  hint: "Did you mean 'normalize-space' or 'ne' or 'le'?"
+- case: E203_disallowed_dom_in_raw
+  code: E203
+  severity: error
+  line: 2
+  col: 9
+  message: "HTML operation 'css' is forbidden in (raw)struct — the document is a plain string, not a DOM"
+  hint: "use string or regex operations (re, split, trim, etc.) in (raw) schemas"
+- case: E300_undefined_symbol
+  code: E300
+  severity: error
+  line: 2
+  col: 16
+  message: "nested references struct 'NonExistent' which is not visible in this file"
+  hint: "declare `struct NonExistent` above this reference or import `(struct)NonExistent`"
+- case: E301_undefined_init_field
+  code: E301
+  severity: error
+  line: 2
+  col: 9
+  message: "'@missing_seed': field 'missing_seed' not found in @init block"
+  hint: "declare it in @init: @init { missing_seed { ... } }"
+- case: E302_topdown_order
+  code: E302
+  severity: error
+  line: 2
+  col: 9
+  message: "'nested Child': struct 'Child' must be declared BEFORE use (top-down order)"
+  hint: "move 'struct Child { ... }' above 'struct Main'"
+- case: E400_invalid_type_decl
+  code: E400
+  severity: error
+  line: 1
+  col: 1
+  message: "unknown struct type 'bogus'"
+  hint: "valid types: dict, flat, item, list, raw, rest, table"
+- case: E401_missing_required_directive
+  code: E401
+  severity: error
+  line: 1
+  col: 1
+  message: "struct type='list' missing required field(s) @split-doc"
+  hint: "add: @split-doc"
+- case: E402_symbol_collision
+  code: E402
+  severity: error
+  line: 3
+  col: 5
+  message: "python symbol collision: field 'foo_bar' and field 'foo-bar' both produce '_parse_foo_bar'"
+  hint: rename one declaration so python names differ
+- case: E403_reserved_keyword
+  code: E403
+  severity: error
+  line: 1
+  col: 1
+  message: "fn 'class' produces invalid python identifier 'class'"
+  hint: "rename 'class' to a portable identifier"
+- case: W011_deprecated_json_alias
+  code: W011
+  severity: warning
+  line: 2
+  col: 5
+  message: "positional JSON key alias is deprecated, use from=\"...\" instead"
+  hint: "example: user_id int from=\"id\""
+- case: W040_whitespace_in_path
+  code: W040
+  severity: warning
+  line: 2
+  col: 17
+  message: "leading or trailing whitespace in 'from' path '  a.b  '"
+  hint: "remove whitespace: from=\"a.b\""
+- case: W041_path_synonym_in_json
+  code: W041
+  severity: warning
+  line: 2
+  col: 17
+  message: "use 'from' instead of 'path' to specify JSON key alias on fields"
+  hint: "example: user_id ... from='id'"

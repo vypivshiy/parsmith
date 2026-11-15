@@ -1,0 +1,68 @@
+@doc "Focused coverage: CSS selectors, extraction, raw/html cleanup and scalar string transforms."
+
+define CSS-CARD=".card"
+define CSS-LINK="a[href]"
+define FMT-ABS="https://example.test{{}}"
+
+define STRIP-URL {
+    rm-prefix "/"
+    rm-suffix ".html"
+}
+
+(list)struct StringsBasic {
+    @pre-validate {
+        assert {
+            css CSS-CARD
+        }
+    }
+
+    @split-doc {
+        css-all CSS-CARD
+    }
+
+    clean-html {
+        css-remove ".ad, script"
+        raw
+    }
+
+    inner-html {
+        raw inner
+    }
+
+    title {
+        css ".title"
+        text
+        ltrim
+        rtrim
+        trim
+        normalize-space
+        repl "foo" "bar"
+    }
+
+    link {
+        css CSS-LINK
+        attr "href"
+        STRIP-URL
+        fmt FMT-ABS
+    }
+
+    slug {
+        css ".slug"
+        text
+        rm-prefix-suffix "__"
+        fallback ""
+    }
+
+    normalized-code {
+        css ".code"
+        text
+        re-sub #"\s+"# "-"
+        fallback ""
+    }
+
+    active-flag {
+        css ".is-active"
+        to-bool
+        fallback #false
+    }
+}

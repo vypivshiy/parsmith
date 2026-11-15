@@ -1,0 +1,44 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+
+# Python / Maturin / uv
+/.venv/
+__pycache__/
+*.py[cod]
+*.pyd
+*.pdb
+*.so
+*.dylib
+/dist/
+/build/
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Node / TypeScript (toolchain tests & playground)
+node_modules/
+playground/node_modules/
+playground/dist/
+*.tsbuildinfo
+js/*.node
+js/wasm/
+js/README.md
+js/LICENSE
+js/*.tgz
+
+# Release build artifacts & credentials
+/Release/
+.env
+.env.*
+!.env.example
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Scratch / local specs & tickets
+/.scratch/

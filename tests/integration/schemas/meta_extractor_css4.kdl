@@ -1,0 +1,128 @@
+@doc """
+Universal OpenGraph and Twitter Cards metadata extractor using CSS :not(...) negation selectors.
+"""
+
+define CSS-OG-OTHER="meta[property^='og:'][content]:not([property='og:title']):not([property='og:description']):not([property='og:url']):not([property='og:image'])"
+
+define CSS-TWITTER-OTHER="meta[property^='twitter:'][content]:not([property='twitter:card']):not([property='twitter:title']):not([property='twitter:description']):not([property='twitter:image']), meta[name^='twitter:'][content]:not([name='twitter:card']):not([name='twitter:title']):not([name='twitter:description']):not([name='twitter:image'])"
+
+struct MetaBase {
+    description {
+        css "meta[name='description'][content], meta[name='Description'][content]"
+        attr "content"
+        fallback #null
+    }
+    keywords {
+        css "meta[name='keywords'][content], meta[name='Keywords'][content]"
+        attr "content"
+        split ","
+        trim
+        fallback {}
+    }
+    author {
+        css "meta[name='author'][content], meta[name='Author'][content]"
+        attr "content"
+        fallback #null
+    }
+    viewport {
+        css "meta[name='viewport'][content]"
+        attr "content"
+        fallback #null
+    }
+}
+
+(dict)struct MetaOpenGraphOther {
+    @split-doc {
+        css-all CSS-OG-OTHER
+    }
+    @key { attr "property" }
+    @value { attr "content" }
+}
+
+struct MetaOpenGraph {
+    @doc "OpenGraph (Facebook/Meta) metatag specs."
+
+    title {
+        css "meta[property='og:title'][content]"
+        attr "content"
+        fallback #null
+    }
+    description {
+        css "meta[property='og:description'][content]"
+        attr "content"
+        fallback #null
+    }
+    url {
+        css "meta[property='og:url'][content]"
+        attr "content"
+        fallback #null
+    }
+    image {
+        css "meta[property='og:image'][content]"
+        attr "content"
+        fallback #null
+    }
+    others { nested MetaOpenGraphOther }
+}
+
+(dict)struct MetaTwitterOther {
+    @split-doc {
+        css-all CSS-TWITTER-OTHER
+    }
+    @key { attr "property" "name"; first }
+    @value { attr "content" }
+}
+
+struct MetaTwitter {
+    card {
+        css "meta[property='twitter:card'][content], meta[name='twitter:card'][content]"
+        attr "content"
+        fallback #null
+    }
+    title {
+        css "meta[property='twitter:title'][content], meta[name^='twitter:title'][content]"
+        attr "content"
+        fallback #null
+    }
+    description {
+        css "meta[property='twitter:description'][content], meta[name^='twitter:description'][content]"
+        attr "content"
+        fallback #null
+    }
+    image {
+        css "meta[property='twitter:image'][content], meta[name^='twitter:image'][content]"
+        attr "content"
+        fallback #null
+    }
+    others { nested MetaTwitterOther }
+}
+
+struct UniversalMetaExtractor {
+    @doc """
+    Entrypoint metadata parser accepting any HTML document with <head> meta tags.
+    """
+
+    title {
+        css "title"
+        text
+        trim
+    }
+    canonical {
+        css "link[rel='canonical'][href]"
+        attr "href"
+        fallback #null
+    }
+    favicon {
+        css "link[rel~='icon'][href]"
+        attr "href"
+        fallback #null
+    }
+    rss-feeds {
+        css-all "link[type='application/rss+xml'][href], link[type='application/atom+xml'][href]"
+        attr "href"
+        fallback {}
+    }
+    meta { nested MetaBase }
+    open-graph { nested MetaOpenGraph }
+    twitter { nested MetaTwitter }
+}

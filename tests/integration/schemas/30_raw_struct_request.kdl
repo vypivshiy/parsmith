@@ -1,0 +1,13 @@
+// Regression: (raw)struct with @request.
+(raw)struct RawProxyList {
+    @doc """
+    Plain-text proxy list, one ip:port per line.
+    """
+    @request """
+    curl https://databay.com/free-proxy-list.txt
+    """
+
+    proxies {
+        split "\n"
+    }
+}

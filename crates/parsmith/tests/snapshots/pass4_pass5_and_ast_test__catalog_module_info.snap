@@ -1,0 +1,423 @@
+---
+source: crates/parsmith/tests/pass4_pass5_and_ast_test.rs
+expression: info
+---
+doc: "Multi-schema catalog module covering HTML, Raw, JSON hoisting, and REST."
+source_file: catalog.kdl
+struct_kinds:
+  BookCard: list
+  CatalogPage: item
+  LogParser: raw
+  CatalogApi: rest
+structs:
+  - name: BookCard
+    kind: list
+    keep_order: false
+    fields:
+      - name: title
+        type_info:
+          base:
+            kind: string
+          is_array: false
+          is_optional: false
+          is_dict: false
+          omitempty: false
+          skip: false
+        has_fallback: false
+      - name: slug
+        type_info:
+          base:
+            kind: string
+          is_array: false
+          is_optional: false
+          is_dict: false
+          omitempty: false
+          skip: false
+        has_fallback: false
+      - name: price
+        type_info:
+          base:
+            kind: float
+          is_array: false
+          is_optional: false
+          is_dict: false
+          omitempty: false
+          skip: false
+        has_fallback: true
+    init_fields: []
+    checks: []
+    has_pre_validate: false
+    requests: []
+    errors: []
+  - name: CatalogPage
+    kind: item
+    doc: Main catalog page parser
+    keep_order: false
+    fields:
+      - name: heading
+        type_info:
+          base:
+            kind: string
+          is_array: false
+          is_optional: false
+          is_dict: false
+          omitempty: false
+          skip: false
+        has_fallback: false
+      - name: books
+        type_info:
+          base:
+            kind: nested
+            ref: BookCard
+          is_array: true
+          is_optional: false
+          is_dict: false
+          reference: BookCard
+          omitempty: false
+          skip: false
+        has_fallback: false
+      - name: translations
+        type_info:
+          base:
+            kind: json
+            ref: Translations
+          is_array: false
+          is_optional: false
+          is_dict: false
+          reference: Translations
+          omitempty: false
+          skip: false
+        has_fallback: false
+    init_fields:
+      - name: raw_state
+        type_info:
+          base:
+            kind: string
+          is_array: false
+          is_optional: false
+          is_dict: false
+          omitempty: false
+          skip: false
+    checks:
+      - name: has_books
+        return_type:
+          base:
+            kind: bool
+          is_array: false
+          is_optional: false
+          is_dict: false
+          omitempty: false
+          skip: false
+    has_pre_validate: true
+    requests:
+      - name: fetch-page
+        method: GET
+        url: "https://books.example.com/page/{{page:int}}"
+        body_kind: empty
+        placeholders:
+          - name: page
+            type_name: int
+            is_array: false
+            is_optional: false
+            style: ~
+          - name: tags
+            type_name: str
+            is_array: true
+            is_optional: false
+            style: csv
+          - name: query
+            type_name: str
+            is_array: false
+            is_optional: true
+            style: ~
+    errors: []
+  - name: LogParser
+    kind: raw
+    keep_order: false
+    fields:
+      - name: first_ip
+        type_info:
+          base:
+            kind: string
+          is_array: false
+          is_optional: true
+          is_dict: false
+          omitempty: false
+          skip: false
+        has_fallback: true
+    init_fields: []
+    checks: []
+    has_pre_validate: false
+    requests: []
+    errors: []
+  - name: CatalogApi
+    kind: rest
+    doc: Typed REST client for Catalog API
+    keep_order: false
+    fields: []
+    init_fields: []
+    checks: []
+    has_pre_validate: false
+    requests:
+      - name: get-translations
+        method: POST
+        url: "https://api.example.com/v1/translations/{{anime_id:int}}"
+        response_schema: Translations
+        response_path: data
+        result_alias_name: GetTranslationsResult
+        body_kind: json
+        placeholders:
+          - name: anime_id
+            type_name: int
+            is_array: false
+            is_optional: false
+            style: ~
+          - name: lang
+            type_name: str
+            is_array: false
+            is_optional: true
+            style: ~
+          - name: include_inactive
+            type_name: bool
+            is_array: false
+            is_optional: false
+            style: ~
+    errors:
+      - variant_name: CatalogApiErr404NotFound
+        status: 404
+        schema_name: ApiError
+        suffix: not-found
+        conditions:
+          detail:
+            String: Not found
+      - variant_name: CatalogApiErr500Code
+        status: 500
+        schema_name: ApiError
+        required_keys:
+          - code
+functions:
+  - name: extract_heading
+    is_raw: false
+    doc: Extracts page heading
+    params:
+      - name: document
+        type_info:
+          base:
+            kind: document
+          is_array: false
+          is_optional: false
+          is_dict: false
+          omitempty: false
+          skip: false
+    return_type:
+      base:
+        kind: string
+      is_array: false
+      is_optional: false
+      is_dict: false
+      omitempty: false
+      skip: false
+  - name: normalize_slug
+    is_raw: true
+    params:
+      - name: document
+        type_info:
+          base:
+            kind: string
+          is_array: false
+          is_optional: false
+          is_dict: false
+          omitempty: false
+          skip: false
+    return_type:
+      base:
+        kind: string
+      is_array: false
+      is_optional: false
+      is_dict: false
+      omitempty: false
+      skip: false
+json_defs:
+  - name: Author
+    kind: object
+    is_array: false
+    is_dict: false
+    is_hoisted: false
+    fields:
+      - name: id
+        type_info:
+          base:
+            kind: int
+          is_array: false
+          is_optional: false
+          is_dict: false
+          omitempty: false
+          skip: false
+        is_optional: false
+        omitempty: false
+        skip: false
+        is_dict: false
+      - name: display_name
+        type_info:
+          base:
+            kind: string
+          is_array: false
+          is_optional: false
+          is_dict: false
+          omitempty: false
+          skip: false
+        alias: profile.display_name
+        is_optional: false
+        omitempty: false
+        skip: false
+        is_dict: false
+  - name: TranslationsValue
+    kind: object
+    is_array: false
+    is_dict: false
+    is_hoisted: true
+    fields:
+      - name: stream_url
+        type_info:
+          base:
+            kind: string
+          is_array: false
+          is_optional: false
+          is_dict: false
+          omitempty: false
+          skip: false
+        alias: url
+        is_optional: false
+        omitempty: false
+        skip: false
+        is_dict: false
+      - name: author
+        type_info:
+          base:
+            kind: json
+            ref: Author
+          is_array: false
+          is_optional: true
+          is_dict: false
+          reference: Author
+          omitempty: false
+          skip: false
+        is_optional: true
+        omitempty: false
+        skip: false
+        is_dict: false
+      - name: internal_token
+        type_info:
+          base:
+            kind: string
+          is_array: false
+          is_optional: false
+          is_dict: false
+          omitempty: false
+          skip: true
+        is_optional: false
+        omitempty: false
+        skip: true
+        is_dict: false
+      - name: backup_url
+        type_info:
+          base:
+            kind: string
+          is_array: false
+          is_optional: true
+          is_dict: false
+          omitempty: true
+          skip: false
+        is_optional: true
+        omitempty: true
+        skip: false
+        is_dict: false
+  - name: Translations
+    kind: dict
+    is_array: false
+    is_dict: true
+    is_hoisted: false
+    key_type:
+      base:
+        kind: string
+      is_array: false
+      is_optional: false
+      is_dict: false
+      omitempty: false
+      skip: false
+    value_type:
+      base:
+        kind: json
+        ref: TranslationsValue
+      is_array: false
+      is_optional: false
+      is_dict: false
+      reference: TranslationsValue
+      omitempty: false
+      skip: false
+  - name: ApiError
+    kind: object
+    is_array: false
+    is_dict: false
+    is_hoisted: false
+    fields:
+      - name: code
+        type_info:
+          base:
+            kind: int
+          is_array: false
+          is_optional: false
+          is_dict: false
+          omitempty: false
+          skip: false
+        is_optional: false
+        omitempty: false
+        skip: false
+        is_dict: false
+      - name: detail
+        type_info:
+          base:
+            kind: string
+          is_array: false
+          is_optional: false
+          is_dict: false
+          omitempty: false
+          skip: false
+        is_optional: false
+        omitempty: false
+        skip: false
+        is_dict: false
+extensions:
+  - namespace: StrExt
+    operations:
+      - name: slugify
+        qualified_name: StrExt.slugify
+        input:
+          base:
+            kind: string
+          is_array: false
+          is_optional: false
+        output:
+          base:
+            kind: string
+          is_array: false
+          is_optional: false
+        targets:
+          - py
+          - js
+          - ts
+      - name: truthy
+        qualified_name: StrExt.truthy
+        input:
+          generic: T
+          is_array: false
+          is_optional: false
+        output:
+          base:
+            kind: bool
+          is_array: false
+          is_optional: false
+        targets:
+          - py
+          - js
+          - ts

@@ -1,0 +1,62 @@
+---
+source: crates/parsmith/tests/python_codegen_html_raw_test.rs
+expression: "&res.files[\"parsmith_runtime.py\"]"
+---
+# Auto-generated runtime helpers by parsmith. DO NOT EDIT.
+from __future__ import annotations
+
+from html import unescape as html_unescape
+import re
+
+class RtAssertionError(ValueError):
+    pass
+
+
+def rt_assert(cond: bool, msg: str = "") -> None:
+    if not cond:
+        raise RtAssertionError(msg or "parsmith assertion failed")
+
+class RtRegexError(ValueError):
+    pass
+
+
+def rt_re_search(pattern: str, value: str, msg: str = "") -> str:
+    m = re.search(pattern, value)
+    if m is None:
+        raise RtRegexError(msg or "parsmith re-match failed")
+    return m[1]
+
+def rt_repl_map(s: str, replacements: dict[str, str]) -> str:
+    for old, new in replacements.items():
+        s = s.replace(old, new)
+    return s
+
+RT_RE_HEX_ENTITY = re.compile(r"&#x([0-9a-fA-F]+);")
+RT_RE_UNICODE_ENTITY = re.compile(r"\\u([0-9a-fA-F]{4})")
+RT_RE_BYTES_ENTITY = re.compile(r"\\x([0-9a-fA-F]{2})")
+RT_RE_CHARS_MAP: dict[str, str] = {
+    "\\b": "\b",
+    "\\f": "\f",
+    "\\n": "\n",
+    "\\r": "\r",
+    "\\t": "\t",
+}
+
+
+def rt_unescape_text(text: str) -> str:
+    s = html_unescape(text)
+    s = RT_RE_HEX_ENTITY.sub(lambda m: chr(int(m.group(1), 16)), s)
+    s = RT_RE_UNICODE_ENTITY.sub(lambda m: chr(int(m.group(1), 16)), s)
+    s = RT_RE_BYTES_ENTITY.sub(lambda m: chr(int(m.group(1), 16)), s)
+    for ch, r in RT_RE_CHARS_MAP.items():
+        s = s.replace(ch, r)
+    return s
+
+class RtUnmatchedTableRow:
+    pass
+
+
+RT_UNMATCHED_TABLE_ROW = RtUnmatchedTableRow()
+
+def normalize_value(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()

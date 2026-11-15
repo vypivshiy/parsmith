@@ -1,0 +1,9 @@
+json Err { error str; detail str }
+json User { id int; name str }
+(rest)struct API {
+    @error 404 Err error detail
+    @request response=User """
+    GET /users/{{id}} HTTP/1.1
+    Host: api.example.com
+    """
+}

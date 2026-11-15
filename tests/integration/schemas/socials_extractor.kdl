@@ -1,0 +1,166 @@
+@doc """
+Universal socials, contacts, and inline Playerjs configuration extractor.
+"""
+
+define RE-JOHN-DOE=#"(?i)john[\s\-_\.]*doe"#
+
+define RE-BODY-ENDPOINT-LIKE=#"""
+(?ix)
+    (
+        (?:
+            (?:\.\./[A-Za-z0-9\-_/\\?&@.=%]+)
+            |
+            (?:https?://[A-Za-z0-9_\-.]+(?:\.\./)?/[A-Za-z0-9\-_/\\?&@.=%]+)
+            |
+            (?:/[A-Za-z0-9\-_/\\?&@.%]+\.(?:aspx?|action|cfm|cgi|do|pl|css|x?html?|js(?:p|on)?|pdf|php5?|py|rss))
+            |
+            (?:[A-Za-z0-9\-_?&@.%]+/[A-Za-z0-9/\\\-_?&@.%]+\.(?:aspx?|action|cfm|cgi|do|pl|css|x?html?|js(?:p|on)?|pdf|php5?|py|rss))
+        )
+    )
+"""#
+
+define FILTER-EXCLUDE {
+    not {
+        or {
+            starts "info@" "mailto:info@"
+            contains "info@"
+            re RE-JOHN-DOE
+            and {
+                contains "john" "John"
+                contains "doe" "Doe"
+            }
+        }
+    }
+}
+
+define NOT-FILTER-METRICS-SCRIPT {
+    not {
+        contains "ym(" "gtag(" "yaCounter"
+    }
+}
+
+define CSS-ALL-ATTRS {
+    css-all "[href], [src], [action], [onclick], [formaction]"
+    attr "href" "src" "action" "onclick" "formaction"
+}
+
+(flat)struct Git keep-order=#true {
+    @init {
+        endpoints { CSS-ALL-ATTRS }
+    }
+    github {
+        @endpoints
+        filter {
+            contains "github.com/"
+            FILTER-EXCLUDE
+        }
+        fallback {}
+    }
+    gitlab {
+        @endpoints
+        filter {
+            contains "gitlab.com/"
+            FILTER-EXCLUDE
+        }
+        fallback {}
+    }
+}
+
+(flat)struct Socials keep-order=#true {
+    @init {
+        endpoints { CSS-ALL-ATTRS }
+        raw-endpoints {
+            css "body"
+            css-remove "script,svg,img"
+            raw
+            re-all RE-BODY-ENDPOINT-LIKE
+            fallback {}
+        }
+    }
+    twitter {
+        @endpoints
+        filter {
+            contains "twitter.com" "https://x.com"
+            FILTER-EXCLUDE
+        }
+        fallback {}
+    }
+    tiktok {
+        @endpoints
+        filter {
+            contains "tiktok.com"
+            FILTER-EXCLUDE
+        }
+        fallback {}
+    }
+    youtube {
+        @endpoints
+        filter {
+            contains "youtube.com" "youtu.be"
+            FILTER-EXCLUDE
+        }
+        fallback {}
+    }
+    raw-twitter {
+        @raw-endpoints
+        filter {
+            contains "twitter.com" "https://x.com"
+            FILTER-EXCLUDE
+        }
+        fallback {}
+    }
+    raw-youtube {
+        @raw-endpoints
+        filter {
+            contains "youtube.com" "youtu.be"
+            FILTER-EXCLUDE
+        }
+        fallback {}
+    }
+}
+
+struct Contacts {
+    phone {
+        css-all "a[href^='tel:']"
+        attr "href"
+        filter {
+            NOT-FILTER-METRICS-SCRIPT
+            FILTER-EXCLUDE
+        }
+        unique keep-order=#true
+        fallback {}
+    }
+    email {
+        css-all "a[href^='mailto:']"
+        attr "href"
+        filter {
+            NOT-FILTER-METRICS-SCRIPT
+            FILTER-EXCLUDE
+        }
+        unique keep-order=#true
+        fallback {}
+    }
+}
+
+(raw)struct PlayerConfig {
+    @doc "Extract Playerjs id and file URL from inline script text."
+
+    player-id {
+        re #"Playerjs\(\{[^}]*id:\s*[\"']([^\"']+)[\"']"#
+    }
+    stream-file {
+        re #"Playerjs\(\{[^}]*file:\s*[\"']([^\"']+)[\"']"#
+    }
+}
+
+struct SocialsAndContacts {
+    git {
+        nested Git
+    }
+    socials {
+        nested Socials
+    }
+    contacts {
+        nested Contacts
+    }
+}

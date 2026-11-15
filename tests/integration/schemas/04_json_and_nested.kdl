@@ -1,0 +1,89 @@
+@doc "Focused coverage: json schemas, jsonify, nested structs and @init re-use."
+
+define RE-JSON-ARRAY=#"(?s)(\[.*\])"#
+
+define CLEAN-TEXT {
+    text
+    trim
+    normalize-space
+}
+
+json JsonAuthor {
+    name str
+    slug str
+}
+
+(array)json JsonQuote {
+    text str
+    author JsonAuthor
+    tags (array)str
+    score int
+    rating float
+    active bool
+    note str?
+}
+
+struct TinyItem {
+    title {
+        css "h1"
+        CLEAN-TEXT
+    }
+
+    active {
+        css ".is-active"
+        to-bool
+        fallback #false
+    }
+}
+
+(list)struct TinyList {
+    @split-doc {
+        css-all ".nested-card"
+    }
+
+    name {
+        css ".name"
+        text
+        trim
+    }
+
+    href {
+        css "a[href]"
+        attr "href"
+        fallback ""
+    }
+}
+
+struct JsonNestedRoot {
+    @init {
+        raw-json {
+            css "script[type='application/json']"
+            text
+            re RE-JSON-ARRAY
+        }
+    }
+
+    title {
+        css "title"
+        CLEAN-TEXT
+    }
+
+    json-payload {
+        @raw-json
+        jsonify JsonQuote
+    }
+
+    first-author {
+        @raw-json
+        jsonify JsonAuthor path="0.author"
+    }
+
+    nested-item {
+        css ".single"
+        nested TinyItem
+    }
+
+    nested-list {
+        nested TinyList
+    }
+}

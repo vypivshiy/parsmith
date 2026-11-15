@@ -1,0 +1,645 @@
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RtError {
+    pub context: String,
+    pub message: String,
+}
+
+impl RtError {
+    pub fn new(context: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            context: context.into(),
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for RtError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.context.is_empty() {
+            write!(f, "{}", self.message)
+        } else {
+            write!(f, "{}: {}", self.context, self.message)
+        }
+    }
+}
+
+impl std::error::Error for RtError {}
+
+pub const RT_UNMATCHED_TABLE_ROW: &str = "__PARSMITH_UNMATCHED_TABLE_ROW__";
+
+pub type JsonMap<K, V> = HashMap<K, V>;
+
+pub trait Decode: Sized {
+    fn decode(value: Value, context: &str) -> Result<Self, RtError>;
+}
+
+impl Decode for String {
+    fn decode(value: Value, context: &str) -> Result<Self, RtError> {
+        match value {
+            Value::String(s) => Ok(s),
+            _ => Err(RtError::new(context, "expected string")),
+        }
+    }
+}
+
+impl Decode for i64 {
+    fn decode(value: Value, context: &str) -> Result<Self, RtError> {
+        if let Some(n) = value.as_i64() {
+            Ok(n)
+        } else if let Some(u) = value.as_u64() {
+            i64::try_from(u).map_err(|_| RtError::new(context, "integer overflow"))
+        } else {
+            Err(RtError::new(context, "expected integer"))
+        }
+    }
+}
+
+impl Decode for f64 {
+    fn decode(value: Value, context: &str) -> Result<Self, RtError> {
+        value
+            .as_f64()
+            .ok_or_else(|| RtError::new(context, "expected float"))
+    }
+}
+
+impl Decode for bool {
+    fn decode(value: Value, context: &str) -> Result<Self, RtError> {
+        value
+            .as_bool()
+            .ok_or_else(|| RtError::new(context, "expected boolean"))
+    }
+}
+
+impl Decode for Value {
+    fn decode(value: Value, _context: &str) -> Result<Self, RtError> {
+        Ok(value)
+    }
+}
+
+impl Decode for () {
+    fn decode(_value: Value, _context: &str) -> Result<Self, RtError> {
+        Ok(())
+    }
+}
+
+impl<T: Decode> Decode for Option<T> {
+    fn decode(value: Value, context: &str) -> Result<Self, RtError> {
+        if value.is_null() {
+            Ok(None)
+        } else {
+            Ok(Some(T::decode(value, context)?))
+        }
+    }
+}
+
+impl<T: Decode> Decode for Vec<T> {
+    fn decode(value: Value, context: &str) -> Result<Self, RtError> {
+        let arr = value
+            .as_array()
+            .ok_or_else(|| RtError::new(context, "expected JSON array"))?;
+        arr.iter()
+            .cloned()
+            .map(|item| T::decode(item, context))
+            .collect()
+    }
+}
+
+impl<K, V> Decode for HashMap<K, V>
+where
+    K: std::str::FromStr + Eq + std::hash::Hash,
+    K::Err: fmt::Display,
+    V: Decode,
+{
+    fn decode(value: Value, context: &str) -> Result<Self, RtError> {
+        let obj = value
+            .as_object()
+            .ok_or_else(|| RtError::new(context, "expected JSON object"))?;
+        let mut out = HashMap::with_capacity(obj.len());
+        for (k, v) in obj {
+            let parsed_k = k
+                .parse::<K>()
+                .map_err(|e| RtError::new(context, format!("invalid map key '{k}': {e}")))?;
+            let parsed_v = V::decode(v.clone(), context)?;
+            out.insert(parsed_k, parsed_v);
+        }
+        Ok(out)
+    }
+}
+
+pub fn decode<T: Decode>(value: Value, context: &str) -> Result<T, RtError> {
+    T::decode(value, context)
+}
+
+pub fn item_at<T: Clone>(values: &[T], index: i64, context: &str) -> Result<T, RtError> {
+    let pos = if index < 0 {
+        values.len() as i64 + index
+    } else {
+        index
+    };
+    if pos < 0 {
+        return Err(RtError::new(context, "index out of bounds"));
+    }
+    values
+        .get(pos as usize)
+        .cloned()
+        .ok_or_else(|| RtError::new(context, "index out of bounds"))
+}
+
+pub fn string_at(values: &[String], index: i64, context: &str) -> Result<String, RtError> {
+    item_at(values, index, context)
+}
+
+pub fn trim(value: String, chars: Option<&str>) -> String {
+    chars.map_or_else(
+        || value.trim().to_string(),
+        |c| value.trim_matches(|x| c.contains(x)).to_string(),
+    )
+}
+
+pub fn trim_chars(value: String, chars: &str) -> String {
+    value.trim_matches(|x| chars.contains(x)).to_string()
+}
+
+pub fn ltrim(value: String, chars: Option<&str>) -> String {
+    chars.map_or_else(
+        || value.trim_start().to_string(),
+        |c| value.trim_start_matches(|x| c.contains(x)).to_string(),
+    )
+}
+
+pub fn ltrim_chars(value: String, chars: &str) -> String {
+    value.trim_start_matches(|x| chars.contains(x)).to_string()
+}
+
+pub fn rtrim(value: String, chars: Option<&str>) -> String {
+    chars.map_or_else(
+        || value.trim_end().to_string(),
+        |c| value.trim_end_matches(|x| c.contains(x)).to_string(),
+    )
+}
+
+pub fn rtrim_chars(value: String, chars: &str) -> String {
+    value.trim_end_matches(|x| chars.contains(x)).to_string()
+}
+
+pub fn normalize_space(value: String) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+pub fn rm_prefix(value: String, prefix: &str) -> String {
+    value.strip_prefix(prefix).unwrap_or(&value).to_string()
+}
+
+pub fn rm_suffix(value: String, suffix: &str) -> String {
+    value.strip_suffix(suffix).unwrap_or(&value).to_string()
+}
+
+pub fn rm_prefix_suffix(value: String, part: &str) -> String {
+    rm_suffix(rm_prefix(value, part), part)
+}
+
+pub fn fmt_value(template: &str, value: &str) -> String {
+    if template.contains("{{}}") {
+        template.replace("{{}}", value)
+    } else {
+        template.replacen("{}", value, 1)
+    }
+}
+
+pub fn repl(value: String, old: &str, new: &str) -> String {
+    value.replace(old, new)
+}
+
+pub fn repl_map(mut value: String, pairs: &[(&str, &str)]) -> String {
+    for &(old, new) in pairs {
+        value = value.replace(old, new);
+    }
+    value
+}
+
+pub fn lower(value: String) -> String {
+    value.to_lowercase()
+}
+
+pub fn upper(value: String) -> String {
+    value.to_uppercase()
+}
+
+pub fn unescape(value: String) -> String {
+    let mut s = value
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&nbsp;", "\u{00a0}")
+        .replace("&copy;", "\u{00a9}")
+        .replace("&reg;", "\u{00ae}")
+        .replace("&trade;", "\u{2122}")
+        .replace("&euro;", "\u{20ac}")
+        .replace("&pound;", "\u{00a3}")
+        .replace("&yen;", "\u{00a5}")
+        .replace("&cent;", "\u{00a2}")
+        .replace("&sect;", "\u{00a7}")
+        .replace("&deg;", "\u{00b0}")
+        .replace("&plusmn;", "\u{00b1}")
+        .replace("&times;", "\u{00d7}")
+        .replace("&divide;", "\u{00f7}")
+        .replace("&ndash;", "\u{2013}")
+        .replace("&mdash;", "\u{2014}")
+        .replace("&lsquo;", "\u{2018}")
+        .replace("&rsquo;", "\u{2019}")
+        .replace("&ldquo;", "\u{201c}")
+        .replace("&rdquo;", "\u{201d}")
+        .replace("&bull;", "\u{2022}")
+        .replace("&hellip;", "\u{2026}")
+        .replace("&laquo;", "\u{00ab}")
+        .replace("&raquo;", "\u{00bb}")
+        .replace("&amp;", "&");
+
+    if let Ok(re_hex) = Regex::new(r"&#[xX]([0-9a-fA-F]+);") {
+        s = re_hex
+            .replace_all(&s, |caps: &regex::Captures<'_>| {
+                u32::from_str_radix(&caps[1], 16)
+                    .ok()
+                    .and_then(char::from_u32)
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| caps[0].to_string())
+            })
+            .into_owned();
+    }
+    if let Ok(re_dec) = Regex::new(r"&#(\d+);") {
+        s = re_dec
+            .replace_all(&s, |caps: &regex::Captures<'_>| {
+                caps[1]
+                    .parse::<u32>()
+                    .ok()
+                    .and_then(char::from_u32)
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| caps[0].to_string())
+            })
+            .into_owned();
+    }
+    if let Ok(re_u) = Regex::new(r"\\u([0-9a-fA-F]{4})") {
+        s = re_u
+            .replace_all(&s, |caps: &regex::Captures<'_>| {
+                u32::from_str_radix(&caps[1], 16)
+                    .ok()
+                    .and_then(char::from_u32)
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| caps[0].to_string())
+            })
+            .into_owned();
+    }
+    if let Ok(re_x) = Regex::new(r"\\x([0-9a-fA-F]{2})") {
+        s = re_x
+            .replace_all(&s, |caps: &regex::Captures<'_>| {
+                u32::from_str_radix(&caps[1], 16)
+                    .ok()
+                    .and_then(char::from_u32)
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| caps[0].to_string())
+            })
+            .into_owned();
+    }
+    s.replace("\\b", "\x08")
+        .replace("\\f", "\x0c")
+        .replace("\\n", "\n")
+        .replace("\\r", "\r")
+        .replace("\\t", "\t")
+}
+
+pub fn index(value: &str, index: i64, context: &str) -> Result<String, RtError> {
+    let chars: Vec<char> = value.chars().collect();
+    let pos = if index < 0 {
+        chars.len() as i64 + index
+    } else {
+        index
+    };
+    if pos < 0 {
+        return Err(RtError::new(context, "index out of bounds"));
+    }
+    chars
+        .get(pos as usize)
+        .copied()
+        .map(|c| c.to_string())
+        .ok_or_else(|| RtError::new(context, "index out of bounds"))
+}
+
+pub fn str_index(value: &str, idx: i64, context: &str) -> Result<String, RtError> {
+    index(value, idx, context)
+}
+
+fn normalize_slice_range(len: i64, start: i64, end: i64) -> (usize, usize) {
+    let norm = |n: i64| if n < 0 { (len + n).max(0) } else { n.min(len) };
+    let s = norm(start);
+    let e = norm(end);
+    if s >= e {
+        (0, 0)
+    } else {
+        (s as usize, e as usize)
+    }
+}
+
+pub fn slice(value: &str, start: i64, end: i64) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    let (s, e) = normalize_slice_range(chars.len() as i64, start, end);
+    if s >= e {
+        return String::new();
+    }
+    chars[s..e].iter().collect()
+}
+
+pub fn str_slice(value: &str, start: i64, end: i64) -> String {
+    slice(value, start, end)
+}
+
+pub fn slice_vec<T: Clone>(value: &[T], start: i64, end: i64) -> Vec<T> {
+    let (s, e) = normalize_slice_range(value.len() as i64, start, end);
+    if s >= e {
+        Vec::new()
+    } else {
+        value[s..e].to_vec()
+    }
+}
+
+pub fn len<T>(values: &[T]) -> i64 {
+    values.len() as i64
+}
+
+pub fn str_len(value: &str) -> i64 {
+    value.chars().count() as i64
+}
+
+pub fn unique<T: Eq + std::hash::Hash + Clone>(value: Vec<T>) -> Vec<T> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for item in value {
+        if seen.insert(item.clone()) {
+            out.push(item);
+        }
+    }
+    out
+}
+
+pub fn to_int(value: String, context: &str) -> Result<i64, RtError> {
+    value
+        .trim()
+        .parse()
+        .map_err(|e| RtError::new(context, format!("invalid integer: {e}")))
+}
+
+pub fn to_float(value: String, context: &str) -> Result<f64, RtError> {
+    value
+        .trim()
+        .parse()
+        .map_err(|e| RtError::new(context, format!("invalid float: {e}")))
+}
+
+pub fn string_bool(value: &str) -> bool {
+    !value.is_empty()
+}
+
+pub fn str_bool(value: &str) -> bool {
+    !value.is_empty()
+}
+
+pub fn to_bool(value: &str) -> bool {
+    !value.is_empty()
+}
+
+pub fn num_bool(value: i64) -> bool {
+    value != 0
+}
+
+pub fn float_bool(value: f64) -> bool {
+    value != 0.0 && !value.is_nan()
+}
+
+pub fn seq_bool<T>(value: &[T]) -> bool {
+    !value.is_empty()
+}
+
+pub fn assert_true(value: bool, context: &str, message: &str) -> Result<(), RtError> {
+    if value {
+        Ok(())
+    } else {
+        Err(RtError::new(context, message))
+    }
+}
+
+pub fn assert_step(value: bool, context: &str, message: &str) -> Result<(), RtError> {
+    assert_true(value, context, message)
+}
+
+pub fn regex_search(value: String, pattern: &str, context: &str) -> Result<String, RtError> {
+    let re = Regex::new(pattern).map_err(|e| RtError::new(context, e.to_string()))?;
+    let captures = re
+        .captures(&value)
+        .ok_or_else(|| RtError::new(context, "regex did not match"))?;
+    Ok(captures
+        .get(1)
+        .or_else(|| captures.get(0))
+        .unwrap()
+        .as_str()
+        .to_string())
+}
+
+pub fn re_one(value: String, pattern: &str, context: &str) -> Result<String, RtError> {
+    regex_search(value, pattern, context)
+}
+
+pub fn regex_all(value: String, pattern: &str, context: &str) -> Result<Vec<String>, RtError> {
+    let re = Regex::new(pattern).map_err(|e| RtError::new(context, e.to_string()))?;
+    Ok(re
+        .captures_iter(&value)
+        .map(|c| {
+            c.get(1)
+                .or_else(|| c.get(0))
+                .unwrap()
+                .as_str()
+                .to_string()
+        })
+        .collect())
+}
+
+pub fn re_all(value: String, pattern: &str, context: &str) -> Result<Vec<String>, RtError> {
+    regex_all(value, pattern, context)
+}
+
+pub fn regex_sub(
+    value: String,
+    pattern: &str,
+    replacement: &str,
+    context: &str,
+) -> Result<String, RtError> {
+    let re = Regex::new(pattern).map_err(|e| RtError::new(context, e.to_string()))?;
+    Ok(re.replace_all(&value, replacement).into_owned())
+}
+
+pub fn re_sub(
+    value: String,
+    pattern: &str,
+    replacement: &str,
+    context: &str,
+) -> Result<String, RtError> {
+    regex_sub(value, pattern, replacement, context)
+}
+
+pub fn regex_split(value: String, pattern: &str, context: &str) -> Result<Vec<String>, RtError> {
+    let re = Regex::new(pattern).map_err(|e| RtError::new(context, e.to_string()))?;
+    Ok(re.split(&value).map(str::to_string).collect())
+}
+
+pub fn re_split(value: String, pattern: &str, context: &str) -> Result<Vec<String>, RtError> {
+    regex_split(value, pattern, context)
+}
+
+pub fn regex_match(value: &str, pattern: &str) -> bool {
+    Regex::new(pattern)
+        .map(|r| r.is_match(value))
+        .unwrap_or(false)
+}
+
+pub fn re_match(value: &str, pattern: &str) -> bool {
+    regex_match(value, pattern)
+}
+
+pub fn re_any(values: &[String], pattern: &str) -> bool {
+    values.iter().any(|v| regex_match(v, pattern))
+}
+
+pub fn re_all_match(values: &[String], pattern: &str) -> bool {
+    values.iter().all(|v| regex_match(v, pattern))
+}
+
+pub fn contains(value: &str, needle: &str) -> bool {
+    value.contains(needle)
+}
+
+pub fn starts(value: &str, needle: &str) -> bool {
+    value.starts_with(needle)
+}
+
+pub fn ends(value: &str, needle: &str) -> bool {
+    value.ends_with(needle)
+}
+
+#[derive(Debug, PartialEq)]
+pub struct JsonRef<'a>(pub std::borrow::Cow<'a, Value>);
+
+impl<'a> JsonRef<'a> {
+    pub fn as_str(&self) -> Option<&'a str> {
+        match &self.0 {
+            std::borrow::Cow::Borrowed(v) => v.as_str(),
+            std::borrow::Cow::Owned(_) => None,
+        }
+    }
+
+    pub fn clone(&self) -> Value {
+        self.0.as_ref().clone()
+    }
+}
+
+impl<'a> std::ops::Deref for JsonRef<'a> {
+    type Target = Value;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+fn next_gjson_segment(path: &str) -> (String, bool, Option<&str>) {
+    let mut unescaped = String::with_capacity(path.len());
+    let mut has_escape = false;
+    let mut chars = path.char_indices().peekable();
+    while let Some((idx, ch)) = chars.next() {
+        if ch == '\\' {
+            if let Some(&(_, next_ch)) = chars.peek() {
+                if matches!(next_ch, '.' | '\\' | '#') {
+                    has_escape = true;
+                    chars.next();
+                    unescaped.push(next_ch);
+                    continue;
+                }
+            }
+            unescaped.push('\\');
+        } else if ch == '.' {
+            return (unescaped, has_escape, Some(&path[idx + 1..]));
+        } else {
+            unescaped.push(ch);
+        }
+    }
+    (unescaped, has_escape, None)
+}
+
+pub fn json_opt<'a>(value: &'a Value, path: &str) -> Option<JsonRef<'a>> {
+    json_path(value, path, "").ok()
+}
+
+pub fn json_path<'a>(
+    value: &'a Value,
+    path: &str,
+    context: &str,
+) -> Result<JsonRef<'a>, RtError> {
+    if path.is_empty() {
+        return Ok(JsonRef(std::borrow::Cow::Borrowed(value)));
+    }
+    let mut current = value;
+    let mut rem = Some(path);
+    while let Some(r) = rem {
+        let (segment, has_escape, next_rem) = next_gjson_segment(r);
+        rem = next_rem;
+        if !has_escape && segment == "#" {
+            let arr = current.as_array().ok_or_else(|| {
+                RtError::new(context, "expected JSON array for '#' operator")
+            })?;
+            return match rem {
+                None => Ok(JsonRef(std::borrow::Cow::Owned(Value::Number(
+                    (arr.len() as u64).into(),
+                )))),
+                Some(subpath) => {
+                    let mut out = Vec::new();
+                    for item in arr {
+                        if let Some(v) = json_opt(item, subpath) {
+                            if !v.is_null() {
+                                out.push(v.0.into_owned());
+                            }
+                        }
+                    }
+                    Ok(JsonRef(std::borrow::Cow::Owned(Value::Array(out))))
+                }
+            };
+        }
+        let next_val = if !has_escape {
+            if let Ok(index) = segment.parse::<usize>() {
+                current.as_array().and_then(|arr| arr.get(index))
+            } else {
+                current.get(segment.as_str())
+            }
+        } else {
+            current.get(segment.as_str())
+        };
+        current = next_val.ok_or_else(|| {
+            RtError::new(context, format!("missing JSON path segment '{segment}'"))
+        })?;
+    }
+    Ok(JsonRef(std::borrow::Cow::Borrowed(current)))
+}
+
+pub fn extract_json_value(
+    value: &Value,
+    path: Option<&str>,
+    context: &str,
+) -> Result<Value, RtError> {
+    match path {
+        Some(p) if !p.is_empty() => Ok(json_path(value, p, context)?.0.into_owned()),
+        _ => Ok(value.clone()),
+    }
+}
+
+pub fn parse_json(value: &str, path: &str, context: &str) -> Result<Value, RtError> {
+    let parsed: Value =
+        serde_json::from_str(value).map_err(|e| RtError::new(context, e.to_string()))?;
+    Ok(json_path(&parsed, path, context)?.0.into_owned())
+}

@@ -1,0 +1,40 @@
+[package]
+name = "parsmith"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+description = "Universal Rust compiler, linter, and multi-target codegen engine for KDL 2.0 Schema DSL v2.1"
+
+[features]
+default = ["cli"]
+cli = ["dep:clap"]
+
+[lib]
+name = "parsmith"
+path = "src/lib.rs"
+
+[[bin]]
+name = "parsmith"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[dependencies]
+kdl.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+indexmap.workspace = true
+thiserror.workspace = true
+strsim.workspace = true
+cssparser.workspace = true
+regex-syntax.workspace = true
+clap = { workspace = true, optional = true }
+
+[dev-dependencies]
+insta.workspace = true

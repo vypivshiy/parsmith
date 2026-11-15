@@ -1,0 +1,25 @@
+[package]
+name = "parsmith-py"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+description = "PyO3 Python bindings for parsmith"
+
+[lib]
+name = "_parsmith"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+parsmith.workspace = true
+pyo3.workspace = true
+serde.workspace = true
+serde_json.workspace = true

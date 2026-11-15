@@ -1,0 +1,65 @@
+@doc "Regression: css-all returns element list which supports index/first/last."
+
+struct DocIndexing {
+    @doc "Document link indexing coverage."
+
+    // first link href — exercises `first` (= Index 0).
+    first_link {
+        css-all "a"
+        first
+        attr "href"
+    }
+
+    // last link href — exercises `last` (= Index -1).
+    last_link {
+        css-all "a"
+        last
+        attr "href"
+    }
+
+    // second link href — exercises positive Index.
+    second_link {
+        css-all "a"
+        index 1
+        attr "href"
+    }
+
+    // second-to-last link href — exercises negative Index.
+    penultimate_link {
+        css-all "a"
+        index -2
+        attr "href"
+    }
+}
+
+struct CssAllIndexing {
+    @doc "Document link indexing coverage."
+
+    // first link href — exercises `first` (= Index 0).
+    first_link {
+        css-all "a"
+        first
+        attr "href"
+    }
+
+    // last link href — exercises `last` (= Index -1).
+    last_link {
+        css-all "a"
+        last
+        attr "href"
+    }
+
+    // second link href — exercises positive Index.
+    second_link {
+        css-all "a"
+        index 1
+        attr "href"
+    }
+
+    // second-to-last link href — exercises negative Index.
+    penultimate_link {
+        css-all "a"
+        index -2
+        attr "href"
+    }
+}

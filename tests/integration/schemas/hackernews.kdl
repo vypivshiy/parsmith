@@ -1,0 +1,197 @@
+@doc """
+Hacker News front page and discussion comment tree parser (news.ycombinator.com).
+"""
+
+define FMT-URL="https://news.ycombinator.com/{{}}"
+
+(list)struct News {
+    @split-doc {
+        css-all ".submission"
+    }
+
+    title {
+        css ".title > .titleline > a"
+        text
+        trim
+    }
+    rank {
+        css ".rank"
+        text
+        re-sub #"\D"# ""
+        to-int
+    }
+    id {
+        attr "id"
+        to-int
+        fallback #null
+    }
+    votelink {
+        css ".votelinks a[href]"
+        attr "href"
+        fmt FMT-URL
+        fallback #null
+    }
+    url {
+        css ".title > .titleline > a[href]"
+        attr "href"
+    }
+    site {
+        css ".sitebit .sitestr"
+        text
+        trim
+        fallback #null
+    }
+}
+
+(list)struct Rating {
+    @split-doc {
+        css-all "tr > td.subtext"
+    }
+
+    score {
+        css "span.score[id^='score_']"
+        text
+        re-sub #"\D"# ""
+        to-int
+        fallback 0
+    }
+    author {
+        css "a.hnuser[href]"
+        attr "href"
+        fmt FMT-URL
+        fallback #null
+    }
+    date {
+        css "span.age[title]"
+        attr "title"
+        fallback #null
+    }
+    date-text {
+        css "span.age[title]"
+        text
+        trim
+        fallback #null
+    }
+    url {
+        css "span.age a[href^='item?']"
+        attr "href"
+        fmt FMT-URL
+    }
+    comments {
+        css ".subline > a[href^='item?']"
+        text
+        re-sub #"\D"# ""
+        to-int
+        fallback 0
+    }
+}
+
+struct MainPage {
+    @doc """
+    Main Hacker News submission list page.
+    """
+    @request """
+    curl https://news.ycombinator.com?p={{page-num}}
+    """
+
+    news { nested News }
+    ratings { nested Rating }
+}
+
+(list)struct Comments {
+    @split-doc {
+        css-all "table.comment-tree tr.comtr[id] > td > table"
+    }
+
+    indent {
+        css ".ind[indent]"
+        attr "indent"
+        to-int
+        fallback 0
+    }
+    user {
+        css ".comhead > a.hnuser"
+        text
+        trim
+    }
+    user-url {
+        css ".comhead > a.hnuser[href]"
+        attr "href"
+        fmt FMT-URL
+    }
+    date {
+        css ".comhead .age[title]"
+        attr "title"
+        fallback #null
+    }
+    date-text {
+        css ".comhead .age[title] > a[href^='item?']"
+        text
+        trim
+        fallback #null
+    }
+    text {
+        css ".default > .comment > .commtext"
+        text
+        trim
+    }
+    reply {
+        css ".reply a[href]"
+        attr "href"
+        fmt FMT-URL
+        fallback #null
+    }
+}
+
+struct MainDiscussionPage {
+    @doc """
+    Main Hacker News item discussion page with nested comment tree.
+    """
+    @request """
+    curl https://news.ycombinator.com/item?id={{id}}
+    """
+
+    title {
+        css ".titleline > a"
+        text
+        trim
+    }
+    url {
+        css ".titleline > a[href]"
+        attr "href"
+    }
+    score {
+        css ".subline > .score"
+        text
+        re-sub #"\D"# ""
+        to-int
+        fallback 0
+    }
+    user {
+        css ".subline .hnuser"
+        text
+        trim
+    }
+    user-url {
+        css ".subline .hnuser[href]"
+        attr "href"
+        fmt FMT-URL
+    }
+    date {
+        css ".subline .age[title]"
+        attr "title"
+    }
+    date-text {
+        css ".subline .age[title] > a[href^='item?']"
+        text
+        trim
+    }
+    comments-count {
+        css ".subline > a[href^='item?']"
+        text
+        re-sub #"\D"# ""
+        to-int
+        fallback 0
+    }
+    comments { nested Comments }
+}

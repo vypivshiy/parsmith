@@ -1,0 +1,109 @@
+@doc """
+IMDb search page parser combining SSR metadata cards and Next.js __NEXT_DATA__ hydration JSON.
+"""
+
+define FMT-URL="https://www.imdb.com{{}}"
+
+(list)struct ImdbHtmlCard {
+    @split-doc {
+        css-all "ul.ipc-metadata-list > li.ipc-metadata-list-summary-item"
+    }
+
+    image {
+        css "img.ipc-image[src]"
+        attr "src"
+        fallback #null
+    }
+    image-alt {
+        css "img.ipc-image[alt]"
+        attr "alt"
+        fallback #null
+    }
+    title {
+        css "a.ipc-metadata-list-summary-item__t"
+        text
+        trim
+    }
+    url {
+        css "a.ipc-metadata-list-summary-item__t[href]"
+        attr "href"
+        fmt FMT-URL
+    }
+    year {
+        css "ul.ipc-metadata-list-summary-item__tl > li:first-child > span"
+        text
+        re-sub #"\D"# ""
+        to-int
+        fallback #null
+    }
+}
+
+json TitlePosterImageModel {
+    url str
+    max_height int from="maxHeight"
+    max_width int from="maxWidth"
+    caption str
+}
+
+json TitleResultItem {
+    id str
+    title_name_text str from="titleNameText"
+    title_release_text str from="titleReleaseText"
+    title_type_text str from="titleTypeText"
+    title_poster_image_model TitlePosterImageModel? from="titlePosterImageModel"
+    top_credits (array)str from="topCredits"
+    image_type str from="imageType"
+    series_id str? from="seriesId"
+    series_name_text str? from="seriesNameText"
+    series_release_text str? from="seriesReleaseText"
+    series_type_text str? from="seriesTypeText"
+    series_season_text str? from="seriesSeasonText"
+    series_episode_text str? from="seriesEpisodeText"
+}
+
+(array)json TitleResults {
+    id str
+    title_name_text str from="titleNameText"
+    title_release_text str from="titleReleaseText"
+    title_type_text str from="titleTypeText"
+    title_poster_image_model TitlePosterImageModel? from="titlePosterImageModel"
+    top_credits (array)str from="topCredits"
+    image_type str from="imageType"
+    series_id str? from="seriesId"
+    series_name_text str? from="seriesNameText"
+    series_release_text str? from="seriesReleaseText"
+    series_type_text str? from="seriesTypeText"
+    series_season_text str? from="seriesSeasonText"
+    series_episode_text str? from="seriesEpisodeText"
+}
+
+struct ImdbNextData {
+    @init {
+        next-json {
+            css "script[id='__NEXT_DATA__']"
+            text
+        }
+    }
+
+    title-results {
+        @next-json
+        jsonify TitleResults path="props.pageProps.titleResults"
+    }
+    top-result {
+        @next-json
+        jsonify TitleResultItem path="props.pageProps.titleResults.0"
+    }
+}
+
+struct ImdbHybridPage {
+    @request """
+    curl 'https://www.imdb.com/find/?q={{query}}&s=tt&exact=true'
+    """
+
+    next-data {
+        nested ImdbNextData
+    }
+    cards {
+        nested ImdbHtmlCard
+    }
+}

@@ -1,0 +1,3 @@
+# Reject XPath Operations in BeautifulSoup (`Bs4Spelling`)
+
+The `python-bs4` backend (`Bs4Spelling`) explicitly rejects `xpath`, `xpath-all`, `xpath-remove`, and `xpath` condition operations with a compile-time diagnostic (`E203`), even when `lxml` is configured as the BeautifulSoup HTML parser. BeautifulSoup4 has no native XPath evaluation API; emulating XPath by serializing `BeautifulSoup`/`Tag` trees back to strings (`str(tag)`), parsing them with `lxml.html`, and re-parsing fragments into `BeautifulSoup` introduces silent DOM mutation, loses element identity, and adds an undeclared runtime dependency on `lxml`. Schemas requiring XPath in Python must target a dedicated XPath-capable `DomSpelling` backend (`lxml` / `parsel`).

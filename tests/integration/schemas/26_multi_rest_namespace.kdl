@@ -1,0 +1,18 @@
+@doc "Collision regression: two REST structs in one module must compile in the same namespace."
+
+json Alpha { a int }
+json Beta { b str }
+
+(rest)struct First {
+    @request response=Alpha """
+    GET /a HTTP/1.1
+    Host: api.example.com
+    """
+}
+
+(rest)struct Second {
+    @request response=Beta """
+    GET /b HTTP/1.1
+    Host: api.example.com
+    """
+}

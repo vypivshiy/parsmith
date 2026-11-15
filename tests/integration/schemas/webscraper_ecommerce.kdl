@@ -1,0 +1,70 @@
+@doc """
+Bootstrap e-commerce product cards parser for webscraper.io/test-sites/e-commerce/.
+"""
+
+(list)struct EcommerceProduct {
+    @split-doc {
+        css-all "div.thumbnail"
+    }
+
+    title {
+        css "a.title"
+        attr "title"
+        trim
+    }
+    product_url {
+        css "a.title"
+        attr "href"
+    }
+    price {
+        css "h4.price"
+        text
+        trim
+        ltrim "$"
+        to-float
+    }
+    description {
+        css "p.description"
+        text
+        trim
+    }
+    review_count {
+        css "p.review-count"
+        text
+        re #"(\d+)"#
+        to-int
+        fallback 0
+    }
+    rating_attr {
+        css "div.ratings p[data-rating]"
+        attr "data-rating"
+        to-int
+        fallback 0
+    }
+    stars_count {
+        css-all "div.ratings span.glyphicon-star"
+        len
+    }
+    available_capacities {
+        css-all "div.swatches button.swatch"
+        filter {
+            not {
+                has-attr "disabled"
+            }
+        }
+        text
+        trim
+        fallback {}
+    }
+}
+
+struct EcommercePage {
+    category {
+        css "h1.page-header"
+        text
+        trim
+    }
+    products {
+        nested EcommerceProduct
+    }
+}

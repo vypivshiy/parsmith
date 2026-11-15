@@ -1,0 +1,21 @@
+[package]
+name = "parsmith-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+description = "WebAssembly (wasm-bindgen) browser bindings for parsmith"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+parsmith.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+indexmap.workspace = true
+wasm-bindgen.workspace = true

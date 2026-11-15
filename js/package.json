@@ -1,0 +1,61 @@
+{
+  "name": "parsmith",
+  "version": "1.0.0",
+  "description": "Node-API (napi-rs) & WebAssembly JavaScript/TypeScript SDK for the parsmith KDL 2.0 Schema DSL v2.1 compiler, linter, and multi-target codegen engine",
+  "license": "MIT",
+  "author": "vypivshiy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vypivshiy/parsmith.git"
+  },
+  "homepage": "https://github.com/vypivshiy/parsmith",
+  "bugs": {
+    "url": "https://github.com/vypivshiy/parsmith/issues"
+  },
+  "keywords": [
+    "kdl",
+    "schema",
+    "scraper",
+    "codegen",
+    "parser",
+    "rest",
+    "html"
+  ],
+  "main": "./index.cjs",
+  "module": "./index.mjs",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./index.d.mts",
+        "default": "./index.mjs"
+      },
+      "require": {
+        "types": "./index.d.ts",
+        "default": "./index.cjs"
+      },
+      "types": "./index.d.ts",
+      "default": "./index.cjs"
+    }
+  },
+  "files": [
+    "index.cjs",
+    "index.mjs",
+    "index.d.ts",
+    "index.d.mts",
+    "wasm-fallback.cjs",
+    "wasm/**",
+    "*.node",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "cargo build --release -p parsmith-js",
+    "build:debug": "cargo build -p parsmith-js",
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "tsc --noEmit --strict -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,76 @@
+@doc """
+Hockey Teams horizontal stats table parser for scrapethissite.com/pages/forms/.
+"""
+
+(list)struct HockeyTeam {
+    @split-doc {
+        css-all "table.table tbody tr.team"
+    }
+
+    name {
+        css "td.name"
+        text
+        trim
+    }
+    year {
+        css "td.year"
+        text
+        trim
+        to-int
+    }
+    wins {
+        css "td.wins"
+        text
+        trim
+        to-int
+    }
+    losses {
+        css "td.losses"
+        text
+        trim
+        to-int
+    }
+    ot_losses {
+        css "td.ot-losses"
+        text
+        trim
+        re #"(\d+)"#
+        to-int
+        fallback 0
+    }
+    win_pct {
+        css "td.pct"
+        text
+        trim
+        to-float
+    }
+    goals_for {
+        css "td.gf"
+        text
+        trim
+        to-int
+    }
+    goals_against {
+        css "td.ga"
+        text
+        trim
+        to-int
+    }
+    goal_diff {
+        css "td.diff"
+        text
+        trim
+        to-int
+    }
+}
+
+struct HockeyPage {
+    heading {
+        css "h1"
+        text
+        trim
+    }
+    teams {
+        nested HockeyTeam
+    }
+}

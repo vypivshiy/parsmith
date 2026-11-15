@@ -1,0 +1,43 @@
+@doc "Focused JSON parse test: extract JSON script, parse full array and single values."
+
+define RE-JSON-ARRAY=#"(\[.*\])"#
+
+json JsonAuthor {
+    name str
+    slug str
+}
+
+(array)json JsonQuote {
+    text str
+    author JsonAuthor
+    tags (array)str
+    score int
+    rating float
+    active bool
+    note str?
+}
+
+struct JsonBasic {
+    @init {
+        raw-json {
+            css "script#test-data"
+            text
+            re RE-JSON-ARRAY
+        }
+    }
+
+    full-payload {
+        @raw-json
+        jsonify JsonQuote
+    }
+
+    first-author {
+        @raw-json
+        jsonify JsonAuthor path="0.author"
+    }
+
+    second-author {
+        @raw-json
+        jsonify JsonAuthor path="1.author"
+    }
+}

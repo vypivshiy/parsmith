@@ -1,0 +1,86 @@
+@doc """
+Parser for quotes.toscrape.com covering both SSR HTML cards and /js/ inline script JSON.
+"""
+
+define JSON-PATTERN=#"""
+(?xs)
+    var\s+data\s*=\s*     # START ANCHOR var data =
+    (
+        \[                # START ARRAY
+        .*                # JSON DATA
+        \]                # END ARRAY
+    )
+    ;\s+for               # END ANCHOR
+"""#
+
+json Author {
+    name str
+    goodreads_links str
+    slug str
+}
+
+(array)json Quote {
+    tags (array)str
+    author Author
+    text str
+}
+
+(list)struct QuotesHtmlItem {
+    @split-doc {
+        css-all "div.quote"
+    }
+
+    text {
+        css "span.text"
+        text
+        trim
+    }
+    author {
+        css "small.author"
+        text
+        trim
+    }
+    tags {
+        css-all "div.tags a.tag"
+        text
+        trim
+        fallback {}
+    }
+}
+
+struct QuoteByHtml {
+    quotes {
+        nested QuotesHtmlItem
+    }
+    next-page {
+        css "li.next a[href]"
+        attr "href"
+        fallback #null
+    }
+}
+
+struct QuotesByJs {
+    @init {
+        raw-json {
+            css "body"
+            raw
+            re JSON-PATTERN
+        }
+    }
+    @request """
+    curl https://quotes.toscrape.com/js/page/{{page-num}}/
+    """
+
+    data {
+        @raw-json
+        jsonify Quote
+    }
+    first-author {
+        @raw-json
+        jsonify Author path="0.author"
+    }
+    second-author {
+        @raw-json
+        jsonify Author path="1.author"
+    }
+}

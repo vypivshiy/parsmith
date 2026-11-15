@@ -1,0 +1,718 @@
+---
+source: crates/parsmith/tests/python_codegen_json_rest_test.rs
+expression: "&res.files[\"parsmith_runtime.py\"]"
+---
+# Auto-generated runtime helpers by parsmith. DO NOT EDIT.
+from __future__ import annotations
+
+from html import unescape as html_unescape
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass
+from dataclasses import field
+import importlib
+import json
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections.abc import Callable
+from typing import Any, Generic, Literal, Protocol, TypeVar
+
+class RtAssertionError(ValueError):
+    pass
+
+
+def rt_assert(cond: bool, msg: str = "") -> None:
+    if not cond:
+        raise RtAssertionError(msg or "parsmith assertion failed")
+
+class RtRegexError(ValueError):
+    pass
+
+
+def rt_re_search(pattern: str, value: str, msg: str = "") -> str:
+    m = re.search(pattern, value)
+    if m is None:
+        raise RtRegexError(msg or "parsmith re-match failed")
+    return m[1]
+
+def rt_repl_map(s: str, replacements: dict[str, str]) -> str:
+    for old, new in replacements.items():
+        s = s.replace(old, new)
+    return s
+
+RT_RE_HEX_ENTITY = re.compile(r"&#x([0-9a-fA-F]+);")
+RT_RE_UNICODE_ENTITY = re.compile(r"\\u([0-9a-fA-F]{4})")
+RT_RE_BYTES_ENTITY = re.compile(r"\\x([0-9a-fA-F]{2})")
+RT_RE_CHARS_MAP: dict[str, str] = {
+    "\\b": "\b",
+    "\\f": "\f",
+    "\\n": "\n",
+    "\\r": "\r",
+    "\\t": "\t",
+}
+
+
+def rt_unescape_text(text: str) -> str:
+    s = html_unescape(text)
+    s = RT_RE_HEX_ENTITY.sub(lambda m: chr(int(m.group(1), 16)), s)
+    s = RT_RE_UNICODE_ENTITY.sub(lambda m: chr(int(m.group(1), 16)), s)
+    s = RT_RE_BYTES_ENTITY.sub(lambda m: chr(int(m.group(1), 16)), s)
+    for ch, r in RT_RE_CHARS_MAP.items():
+        s = s.replace(ch, r)
+    return s
+
+class RtUnmatchedTableRow:
+    pass
+
+
+RT_UNMATCHED_TABLE_ROW = RtUnmatchedTableRow()
+
+class RtJsonError(ValueError):
+    pass
+
+
+class RtJsonPathError(RtJsonError):
+    pass
+
+
+class RtJsonFieldMissingError(RtJsonError):
+    pass
+
+
+class RtJsonSchemaError(RtJsonError):
+    pass
+
+
+def rt_expect_dict(data: Any, target: str = "") -> dict[str, Any]:
+    if not isinstance(data, dict):
+        prefix = f"{target}: " if target else ""
+        raise RtJsonSchemaError(f"{prefix}Expected dict, got {type(data).__name__}")
+    return data
+
+
+def rt_expect_list(data: Any, target: str = "") -> list[Any]:
+    if not isinstance(data, list):
+        prefix = f"{target}: " if target else ""
+        raise RtJsonSchemaError(f"{prefix}Expected list, got {type(data).__name__}")
+    return data
+
+
+def rt_resolve_dotpath(
+    data: Any, path: str, is_optional: bool = False, target: str = ""
+) -> Any:
+    prefix = f"{target}: " if target else ""
+    raw_segs: list[str] = []
+    buf: list[str] = []
+    i = 0
+    n = len(path)
+    while i < n:
+        ch = path[i]
+        if ch == "\\" and i + 1 < n and path[i + 1] in (".", "\\", "#"):
+            buf.append(ch)
+            buf.append(path[i + 1])
+            i += 2
+        elif ch == ".":
+            raw_segs.append("".join(buf))
+            buf = []
+            i += 1
+        else:
+            buf.append(ch)
+            i += 1
+    raw_segs.append("".join(buf))
+    current: Any = data
+    for idx_seg, raw_seg in enumerate(raw_segs):
+        if raw_seg == "#":
+            if current is None:
+                if is_optional:
+                    return None
+                raise RtJsonPathError(
+                    f"{prefix}Cannot traverse segment '#' on null object in path '{path}'"
+                )
+            if not isinstance(current, list):
+                if is_optional:
+                    return None
+                raise RtJsonPathError(
+                    f"{prefix}Expected list for '#' in path '{path}', got {type(current).__name__}"
+                )
+            if idx_seg == len(raw_segs) - 1:
+                return len(current)
+            subpath = ".".join(raw_segs[idx_seg + 1 :])
+            out: list[Any] = []
+            for item in current:
+                v = rt_resolve_dotpath(item, subpath, is_optional=True, target=target)
+                if v is not None:
+                    out.append(v)
+            return out
+        has_escape = "\\" in raw_seg
+        if has_escape:
+            seg_chars: list[str] = []
+            j = 0
+            m = len(raw_seg)
+            while j < m:
+                if (
+                    raw_seg[j] == "\\"
+                    and j + 1 < m
+                    and raw_seg[j + 1] in (".", "\\", "#")
+                ):
+                    seg_chars.append(raw_seg[j + 1])
+                    j += 2
+                else:
+                    seg_chars.append(raw_seg[j])
+                    j += 1
+            seg = "".join(seg_chars)
+        else:
+            seg = raw_seg
+        if current is None:
+            if is_optional:
+                return None
+            raise RtJsonPathError(
+                f"{prefix}Cannot traverse segment '{seg}' on null object in path '{path}'"
+            )
+        if not has_escape and seg.isdigit():
+            idx = int(seg)
+            if not isinstance(current, list):
+                if is_optional:
+                    return None
+                raise RtJsonPathError(
+                    f"{prefix}Expected list for index '{idx}' in path '{path}', got {type(current).__name__}"
+                )
+            if not (0 <= idx < len(current)):
+                if is_optional:
+                    return None
+                raise RtJsonPathError(
+                    f"{prefix}Index {idx} out of bounds (len={len(current)}) in path '{path}'"
+                )
+            current = current[idx]
+        elif isinstance(current, dict):
+            if seg not in current:
+                if is_optional:
+                    return None
+                raise RtJsonPathError(
+                    f"{prefix}Missing key '{seg}' in path '{path}'"
+                )
+            current = current[seg]
+        else:
+            if is_optional:
+                return None
+            raise RtJsonPathError(
+                f"{prefix}Cannot access key '{seg}' on non-dict {type(current).__name__} in path '{path}'"
+            )
+    return current
+
+
+def rt_json_req(data: dict[str, Any], key: str, target: str = "") -> Any:
+    fname = target.rsplit(".", 1)[-1] if "." in target else key
+    qual = target if (not target or "." in target) else f"{target}.{fname}"
+    prefix = f"{qual}: " if qual else ""
+    if key not in data:
+        raise RtJsonFieldMissingError(
+            f"{prefix}Required JSON field '{key}' (mapped to '{fname}') is missing"
+        )
+    val = data[key]
+    if val is None:
+        raise RtJsonFieldMissingError(
+            f"{prefix}Field '{key}' is null, but '{fname}' is not nullable"
+        )
+    return val
+
+
+def rt_json_req_path(data: Any, path: str, target: str = "") -> Any:
+    val = rt_resolve_dotpath(data, path, is_optional=False, target=target)
+    if val is None:
+        prefix = f"{target}: " if target else ""
+        fname = target.rsplit(".", 1)[-1] if "." in target else path
+        raise RtJsonFieldMissingError(
+            f"{prefix}Field '{path}' is null, but '{fname}' is not nullable"
+        )
+    return val
+
+@dataclass(slots=True, frozen=True)
+class HttpRequest:
+    method: str
+    url: str
+    headers: dict[str, str] = field(default_factory=dict)
+    params: dict[str, str | list[str]] = field(default_factory=dict)
+    cookies: dict[str, str] = field(default_factory=dict)
+    body: Any = None
+    body_kind: Literal["empty", "json", "form", "raw"] = "empty"
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True, frozen=True)
+class RawResponse:
+    status: int
+    headers: dict[str, str]
+    text: str
+
+
+class TransportError(Exception):
+    def __init__(self, cause: BaseException) -> None:
+        super().__init__(str(cause))
+        self.cause = cause
+
+
+class SyncTransport(Protocol):
+    def send(self, req: HttpRequest) -> RawResponse: ...
+
+
+class AsyncTransport(Protocol):
+    async def send(self, req: HttpRequest) -> RawResponse: ...
+
+
+class HttpxTransport:
+    def __init__(self, client: Any = None) -> None:
+        self._client = client
+
+    def send(self, req: HttpRequest) -> RawResponse:
+        httpx: Any = importlib.import_module("httpx")
+        kw: dict[str, Any] = {}
+        if req.headers:
+            kw["headers"] = req.headers
+        if req.params:
+            kw["params"] = req.params
+        if req.cookies:
+            kw["cookies"] = req.cookies
+        if req.body_kind == "json":
+            kw["json"] = req.body
+        elif req.body_kind == "form":
+            kw["data"] = req.body
+        elif req.body_kind == "raw" and req.body is not None:
+            kw["content"] = req.body
+        kw.update(req.extra)
+        try:
+            if self._client is not None:
+                resp = self._client.request(req.method, req.url, **kw)
+            else:
+                with httpx.Client() as client:
+                    resp = client.request(req.method, req.url, **kw)
+            return RawResponse(
+                status=int(resp.status_code),
+                headers={str(k).lower(): str(v) for k, v in resp.headers.items()},
+                text=str(resp.text),
+            )
+        except httpx.HTTPError as e:
+            raise TransportError(e) from e
+
+
+class AsyncHttpxTransport:
+    def __init__(self, client: Any = None) -> None:
+        self._client = client
+
+    async def send(self, req: HttpRequest) -> RawResponse:
+        httpx: Any = importlib.import_module("httpx")
+        kw: dict[str, Any] = {}
+        if req.headers:
+            kw["headers"] = req.headers
+        if req.params:
+            kw["params"] = req.params
+        if req.cookies:
+            kw["cookies"] = req.cookies
+        if req.body_kind == "json":
+            kw["json"] = req.body
+        elif req.body_kind == "form":
+            kw["data"] = req.body
+        elif req.body_kind == "raw" and req.body is not None:
+            kw["content"] = req.body
+        kw.update(req.extra)
+        try:
+            if self._client is not None:
+                resp = await self._client.request(req.method, req.url, **kw)
+            else:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.request(req.method, req.url, **kw)
+            return RawResponse(
+                status=int(resp.status_code),
+                headers={str(k).lower(): str(v) for k, v in resp.headers.items()},
+                text=str(resp.text),
+            )
+        except httpx.HTTPError as e:
+            raise TransportError(e) from e
+
+
+class RequestsTransport:
+    def __init__(self, session: Any = None) -> None:
+        self._session = session
+
+    def send(self, req: HttpRequest) -> RawResponse:
+        requests: Any = importlib.import_module("requests")
+        kw: dict[str, Any] = {}
+        if req.headers:
+            kw["headers"] = req.headers
+        if req.params:
+            kw["params"] = req.params
+        if req.cookies:
+            kw["cookies"] = req.cookies
+        if req.body_kind == "json":
+            kw["json"] = req.body
+        elif req.body_kind in ("form", "raw") and req.body is not None:
+            kw["data"] = req.body
+        kw.update(req.extra)
+        try:
+            if self._session is not None:
+                resp = self._session.request(req.method, req.url, **kw)
+            else:
+                with requests.Session() as session:
+                    resp = session.request(req.method, req.url, **kw)
+            return RawResponse(
+                status=int(resp.status_code),
+                headers={str(k).lower(): str(v) for k, v in resp.headers.items()},
+                text=str(resp.text),
+            )
+        except requests.RequestException as e:
+            raise TransportError(e) from e
+
+
+class AiohttpTransport:
+    def __init__(self, session: Any = None) -> None:
+        self._session = session
+
+    async def send(self, req: HttpRequest) -> RawResponse:
+        aiohttp: Any = importlib.import_module("aiohttp")
+        kw: dict[str, Any] = {}
+        if req.headers:
+            kw["headers"] = req.headers
+        if req.params:
+            kw["params"] = req.params
+        if req.cookies:
+            kw["cookies"] = req.cookies
+        if req.body_kind == "json":
+            kw["json"] = req.body
+        elif req.body_kind in ("form", "raw") and req.body is not None:
+            kw["data"] = req.body
+        kw.update(req.extra)
+        try:
+            if self._session is not None:
+                async with self._session.request(req.method, req.url, **kw) as resp:
+                    text = await resp.text()
+                    return RawResponse(
+                        status=int(resp.status),
+                        headers={str(k).lower(): str(v) for k, v in resp.headers.items()},
+                        text=str(text),
+                    )
+            else:
+                async with aiohttp.ClientSession() as session:
+                    async with session.request(req.method, req.url, **kw) as resp:
+                        text = await resp.text()
+                        return RawResponse(
+                            status=int(resp.status),
+                            headers={str(k).lower(): str(v) for k, v in resp.headers.items()},
+                            text=str(text),
+                        )
+        except aiohttp.ClientError as e:
+            raise TransportError(e) from e
+
+
+class UrllibTransport:
+    def __init__(self, timeout: float | None = None) -> None:
+        self._timeout = timeout
+
+    def send(self, req: HttpRequest) -> RawResponse:
+        url = req.url
+        if req.params:
+            pairs: list[tuple[str, str]] = []
+            for k, v in req.params.items():
+                if isinstance(v, list):
+                    for item in v:
+                        pairs.append((k, str(item)))
+                elif v is not None:
+                    pairs.append((k, str(v)))
+            if pairs:
+                qs = urllib.parse.urlencode(pairs)
+                sep = "&" if "?" in url else "?"
+                url = f"{url}{sep}{qs}"
+        headers: dict[str, str] = dict(req.headers)
+        if req.cookies:
+            cookie_str = "; ".join(f"{k}={v}" for k, v in req.cookies.items())
+            if "Cookie" in headers:
+                headers["Cookie"] = f"{headers['Cookie']}; {cookie_str}"
+            else:
+                headers["Cookie"] = cookie_str
+        data_bytes: bytes | None = None
+        if req.body_kind == "json" and req.body is not None:
+            data_bytes = json.dumps(req.body).encode("utf-8")
+            if not any(k.lower() == "content-type" for k in headers):
+                headers["Content-Type"] = "application/json"
+        elif req.body_kind == "form" and req.body is not None:
+            if isinstance(req.body, dict):
+                data_bytes = urllib.parse.urlencode(req.body, doseq=True).encode("utf-8")
+            else:
+                data_bytes = str(req.body).encode("utf-8")
+            if not any(k.lower() == "content-type" for k in headers):
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+        elif req.body_kind == "raw" and req.body is not None:
+            if isinstance(req.body, bytes):
+                data_bytes = req.body
+            else:
+                data_bytes = str(req.body).encode("utf-8")
+        ureq = urllib.request.Request(url, data=data_bytes, headers=headers, method=req.method)
+        timeout = req.extra.get("timeout", self._timeout)
+        try:
+            with urllib.request.urlopen(ureq, timeout=timeout) as resp:
+                raw_bytes: bytes = resp.read()
+                resp_headers = {str(k).lower(): str(v) for k, v in resp.headers.items()}
+                return RawResponse(
+                    status=int(resp.status),
+                    headers=resp_headers,
+                    text=raw_bytes.decode("utf-8", errors="replace"),
+                )
+        except urllib.error.HTTPError as e:
+            err_bytes = e.read() if hasattr(e, "read") else b""
+            err_headers = (
+                {str(k).lower(): str(v) for k, v in e.headers.items()}
+                if e.headers is not None
+                else {}
+            )
+            return RawResponse(
+                status=int(e.code),
+                headers=err_headers,
+                text=err_bytes.decode("utf-8", errors="replace"),
+            )
+        except urllib.error.URLError as e:
+            raise TransportError(e) from e
+
+
+def via_httpx(client: Any = None) -> HttpxTransport:
+    return HttpxTransport(client)
+
+
+def via_httpx_async(client: Any = None) -> AsyncHttpxTransport:
+    return AsyncHttpxTransport(client)
+
+
+def via_requests(session: Any = None) -> RequestsTransport:
+    return RequestsTransport(session)
+
+
+def via_aiohttp(session: Any = None) -> AiohttpTransport:
+    return AiohttpTransport(session)
+
+
+def via_urllib(timeout: float | None = None) -> UrllibTransport:
+    return UrllibTransport(timeout)
+
+
+def rt_build_request(
+    method: str,
+    url: str,
+    *,
+    headers: Mapping[str, Any] | None = None,
+    params: Mapping[str, Any] | None = None,
+    cookies: Mapping[str, Any] | None = None,
+    body: Any = None,
+    body_kind: Literal["empty", "json", "form", "raw"] = "empty",
+    extra: Mapping[str, Any] | None = None,
+) -> HttpRequest:
+    clean_headers: dict[str, str] = {}
+    if headers:
+        for k, v in headers.items():
+            if v is not None:
+                clean_headers[str(k)] = str(v)
+    clean_params: dict[str, str | list[str]] = {}
+    if params:
+        for k, v in params.items():
+            if v is None:
+                continue
+            if isinstance(v, list):
+                clean_params[str(k)] = [str(x) for x in v if x is not None]
+            else:
+                clean_params[str(k)] = str(v)
+    clean_cookies: dict[str, str] = {}
+    if cookies:
+        for k, v in cookies.items():
+            if v is not None:
+                clean_cookies[str(k)] = str(v)
+    clean_body: Any = body
+    if body_kind == "form" and isinstance(body, dict):
+        clean_body = {str(k): str(v) for k, v in body.items() if v is not None}
+    extra_dict: dict[str, Any] = {}
+    if extra:
+        for k, v in extra.items():
+            if k == "headers" and isinstance(v, Mapping):
+                for hk, hv in v.items():
+                    if hv is not None:
+                        clean_headers[str(hk)] = str(hv)
+            elif k == "params" and isinstance(v, Mapping):
+                for pk, pv in v.items():
+                    if pv is None:
+                        continue
+                    if isinstance(pv, list):
+                        clean_params[str(pk)] = [str(x) for x in pv if x is not None]
+                    else:
+                        clean_params[str(pk)] = str(pv)
+            elif k == "cookies" and isinstance(v, Mapping):
+                for ck, cv in v.items():
+                    if cv is not None:
+                        clean_cookies[str(ck)] = str(cv)
+            elif v is not None:
+                extra_dict[str(k)] = v
+    return HttpRequest(
+        method=method,
+        url=url,
+        headers=clean_headers,
+        params=clean_params,
+        cookies=clean_cookies,
+        body=clean_body,
+        body_kind=body_kind,
+        extra=extra_dict,
+    )
+
+_T = TypeVar("_T")
+
+
+@dataclass(slots=True, frozen=True)
+class Ok(Generic[_T]):
+    status: int
+    headers: dict[str, str]
+    value: _T
+    ok: Literal[True] = True
+
+    @property
+    def is_ok(self) -> Literal[True]:
+        return True
+
+
+@dataclass(slots=True, frozen=True)
+class UnknownErr:
+    status: int
+    headers: dict[str, str]
+    body: Any = None
+    ok: Literal[False] = False
+
+    @property
+    def is_ok(self) -> Literal[False]:
+        return False
+
+    @property
+    def value(self) -> Any:
+        return self.body
+
+
+@dataclass(slots=True, frozen=True)
+class TransportErr:
+    status: int = 0
+    headers: dict[str, str] = field(default_factory=dict)
+    cause: str = ""
+    exception: BaseException | None = None
+    ok: Literal[False] = False
+
+    @property
+    def is_ok(self) -> Literal[False]:
+        return False
+
+
+@dataclass(slots=True, frozen=True)
+class DecodeErr:
+    status: int
+    headers: dict[str, str]
+    body: Any
+    cause: str
+    exception: Exception | None = None
+    ok: Literal[False] = False
+
+    @property
+    def is_ok(self) -> Literal[False]:
+        return False
+
+
+@dataclass(slots=True, frozen=True)
+class ErrMatcher:
+    status: int
+    check: Callable[[dict[str, Any]], bool] | None
+    factory: Callable[..., Any]
+
+
+def rt_dispatch_response(
+    matchers: list[ErrMatcher],
+    resp: RawResponse,
+    value_fn: Callable[[Any], Any] | None = None,
+) -> Any:
+    status = resp.status
+    headers = resp.headers
+    raw_text = resp.text
+    parsed_body: Any = None
+    json_err: Exception | None = None
+    try:
+        parsed_body = json.loads(raw_text)
+    except Exception as e:
+        json_err = e
+
+    last_decode_err: Exception | None = None
+    matched_error_rule = False
+    for matcher in matchers:
+        if status != matcher.status:
+            continue
+        if matcher.check is not None:
+            if (
+                json_err is not None
+                or not isinstance(parsed_body, dict)
+                or not matcher.check(parsed_body)
+            ):
+                continue
+        matched_error_rule = True
+        if json_err is not None:
+            last_decode_err = json_err
+            continue
+        try:
+            return matcher.factory(headers=headers, value=parsed_body)
+        except (ValueError, KeyError, TypeError) as e:
+            last_decode_err = e
+
+    if 200 <= status < 300 and not matched_error_rule:
+        if value_fn is None:
+            return Ok(status=status, headers=headers, value=None)
+        if json_err is not None:
+            return DecodeErr(
+                status=status,
+                headers=headers,
+                body=raw_text,
+                cause=str(json_err),
+                exception=json_err,
+            )
+        try:
+            val = value_fn(parsed_body)
+            return Ok(status=status, headers=headers, value=val)
+        except (ValueError, KeyError, TypeError) as e:
+            return DecodeErr(
+                status=status,
+                headers=headers,
+                body=parsed_body,
+                cause=str(e),
+                exception=e,
+            )
+
+    if matched_error_rule and last_decode_err is not None:
+        return DecodeErr(
+            status=status,
+            headers=headers,
+            body=parsed_body if json_err is None else raw_text,
+            cause=str(last_decode_err),
+            exception=last_decode_err,
+        )
+
+    fallback_body: Any = parsed_body if json_err is None else (raw_text if raw_text else None)
+    return UnknownErr(status=status, headers=headers, body=fallback_body)
+
+def rt_rest_call(
+    transport: SyncTransport,
+    req: HttpRequest,
+    matchers: list[ErrMatcher],
+    value_fn: Callable[[Any], Any] | None = None,
+) -> Any:
+    try:
+        resp = transport.send(req)
+    except TransportError as e:
+        return TransportErr(status=0, cause=repr(e.cause), exception=e.cause)
+    return rt_dispatch_response(matchers, resp, value_fn)
+
+async def rt_rest_call_async(
+    transport: AsyncTransport,
+    req: HttpRequest,
+    matchers: list[ErrMatcher],
+    value_fn: Callable[[Any], Any] | None = None,
+) -> Any:
+    try:
+        resp = await transport.send(req)
+    except TransportError as e:
+        return TransportErr(status=0, cause=repr(e.cause), exception=e.cause)
+    return rt_dispatch_response(matchers, resp, value_fn)

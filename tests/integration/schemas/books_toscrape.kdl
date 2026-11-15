@@ -1,0 +1,145 @@
+@doc """
+Example implementation for books.toscrape.com fictive bookshop.
+"""
+
+(table)struct ProductInfo {
+    @doc """
+    Parse product description table from product detail page.
+    """
+
+    @request """
+    curl '{{full-book-url}}'
+    """
+
+    @table { css "table.table" }
+    @rows { css-all "tr" }
+    @match { css "th"; text; trim; lower }
+    @value { css "td"; text; trim }
+
+    @pre-validate {
+        assert { css "table tr" }
+    }
+
+    upc {
+        match { eq "upc" }
+    }
+    product-type {
+        match { starts "product" }
+    }
+    price-excl-tax {
+        match { starts "price (ex" }
+        re #"(\d+\.\d+)"#
+        to-float
+    }
+    price-incl-tax {
+        match { starts "price (in" }
+        re #"(\d+\.\d+)"#
+        to-float
+    }
+    tax {
+        match { starts "tax" }
+        re #"(\d+\.\d+)"#
+        to-float
+    }
+    availability {
+        match { eq "availability" }
+        re #"(\d+)"#
+        to-int
+        fallback 0
+    }
+    number-of-reviews {
+        match { starts "number of" }
+        to-int
+        fallback 0
+    }
+}
+
+define FMT-URL="https://books.toscrape.com/catalogue/{{}}"
+define FMT-URL-CURRENT="https://books.toscrape.com/catalogue/page-{{}}.html"
+define FMT-BASE="https://books.toscrape.com/{{}}"
+define RE-BOOK-PRICE=#"(\d+(?:\.\d+)?)"#
+define REPL-RATING {
+    repl {
+        One "1"
+        Two "2"
+        Three "3"
+        Four "4"
+        Five "5"
+    }
+}
+
+(list)struct Book {
+    @doc """
+    Extract book cards from catalogue page.
+    """
+
+    @split-doc { css-all ".col-lg-3" }
+    @pre-validate {
+        assert { css ".col-lg-3 .thumbnail" }
+    }
+
+    name {
+        css ".thumbnail"
+        attr "alt"
+    }
+    url {
+        css "a[href]"
+        attr "href"
+        fmt FMT-URL
+    }
+    image-url {
+        css ".thumbnail"
+        attr "src"
+        rm-prefix ".."
+        ltrim "./"
+        fmt FMT-BASE
+    }
+    rating {
+        css ".star-rating"
+        attr "class"
+        rm-prefix "star-rating "
+        REPL-RATING
+        to-int
+    }
+    price {
+        css ".price_color"
+        text
+        re RE-BOOK-PRICE
+        to-float
+    }
+}
+
+struct MainCatalogue {
+    @doc """
+    Extract pagination URLs and book cards from books.toscrape.com catalogue.
+    """
+
+    @request """
+    GET /catalogue/page-{{page-num}}.html HTTP/2
+    Host: books.toscrape.com
+    Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+    Accept-Language: en-US,en;q=0.9
+    """
+
+    prev-page {
+        css ".previous a"
+        attr "href"
+        rm-prefix "catalogue/"
+        fmt FMT-URL
+        fallback #null
+    }
+    next-page {
+        css ".next a"
+        attr "href"
+        rm-prefix "catalogue/"
+        fmt FMT-URL
+        fallback #null
+    }
+    curr-page {
+        css ".current"
+        text
+        re #"Page\s(\d+)"#
+        fmt FMT-URL-CURRENT
+    }
+    books { nested Book }
+}
