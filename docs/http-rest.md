@@ -1,6 +1,6 @@
 # HTTP Requests (`@request`) & Typed REST Clients (`(rest)struct`)
 
-`parsmith` compiles raw HTTP requests and POSIX `curl` commands directly into typed network constructors and monadic REST API clients across Python, TypeScript, JavaScript, Go, and Rust.
+`parsmith` compiles raw HTTP requests and POSIX `curl` commands directly into typed network constructors and monadic REST API clients across Python, TypeScript, JavaScript, Go, Rust, Elixir, PHP 8.1+, C# (.NET 8+), and Kotlin (JVM).
 
 ---
 
@@ -13,8 +13,23 @@ The `@request` directive operates in two distinct contexts depending on the encl
 | **Primary Role** | Optional convenience factory (`fetch` / `async_fetch`) that fetches the page and instantiates the parser | Dedicated multi-endpoint REST API client |
 | **Parser Coupling** | Parser class remains transport-agnostic (can always be instantiated directly from an HTML/text string) | Struct consists exclusively of `@doc`, `@request`, and `@error[:<suffix>]` directives (`E203` on regular fields) |
 | **`name=` & `response=`** | Optional on a single `@request` (required when declaring multiple `@request` blocks on the same struct) | **Mandatory** on every `@request`: `name="<kebab-id>"` and `response="<SchemaName>"` (or `response=#null`) |
-| **Return Value** | Instantiated parser (`<Struct>` in Python/TS/JS/Go, `Result<<Struct>Parser, rt::RtError>` in Rust) | Monadic `Result` union (`Ok`, `<Struct>Err<Status>[<Suffix>]`, `DecodeErr`, `UnknownErr`, `TransportErr`) |
+| **Return Value** | Instantiated parser (`<Struct>` in Python/TS/JS/Go, `Result<<Struct>Parser, rt::RtError>` in Rust, `{:ok, parser}` in Elixir) | Monadic `Result` union (`Ok`, `<Struct>Err<Status>[<Suffix>]`, `DecodeErr`, `UnknownErr`, `TransportErr`) |
 | **Error Behavior** | Raises/returns transport or HTTP $\ge 400$ errors | **Never throws** on HTTP, network, or JSON decode failures; all outcomes are represented as typed `Result` variants |
+
+### Why `(rest)struct` & `@request` Instead of OpenAPI?
+
+OpenAPI (Swagger) and `parsmith` address opposite sides of HTTP client generation:
+
+1. **Producer-First (OpenAPI) vs. Trace-First (`parsmith`)**:
+   OpenAPI is designed for backend teams who author or auto-generate specifications from server framework annotations. When building clients for external, undocumented, or reverse-engineered APIs (mobile backends, internal BFFs, e-commerce AJAX routes), you rarely have a formal specification—you have a series of captured **raw HTTP traces or `curl` commands** (from browser DevTools, Mitmproxy, or Charles) and a few sample JSON responses. `parsmith` works directly from that minimal empirical input: paste the `curl` or raw HTTP request into `@request`, mark variable segments with typed placeholders (`{{id:int}}`), infer the response contract with `parsmith json-to-kdl`, and compile a working client.
+2. **Isolating Consumers from Stale, Bloated, or Inaccurate Third-Party Specs**:
+   Even when an external vendor publishes an OpenAPI file, generating code directly from it inherits every upstream defect: 200-field models when your service only reads 4 fields, fields marked non-nullable in the spec that return `null` in production, and undocumented error envelopes (such as HTTP `200 OK` responses carrying `{"success": false, "reason": "..."}`). In `parsmith`, the consumer controls the contract via strict **allowlist JSON projection** (including GJSON flattening `from="data.items.#.id"`), strips undeclared keys, and routes real-world failure shapes into typed `@error` variants or `DecodeErr`.
+3. **Minimal, Unified Codegen Across 9 Ecosystems**:
+   Because OpenAPI supports unbounded schema composition (`oneOf`, `anyOf`, `allOf`, discriminator polymorphism, cyclic `$ref`), there is no universal, minimal OpenAPI code generator across languages—teams either rely on heavy multi-file generators (`openapi-generator`) or write custom generators per stack. By constraining `(rest)struct` to concrete wire templates, allowlist `json` schemas, and deterministic `@error` rules, `parsmith` emits a **single, zero-dependency module** with an identical monadic `Result` and transport adapter (`via_*`) contract across all 9 targets.
+
+>[!tip]
+>**Using OpenAPI as a Reference for AI Coding Agents**
+>If an external service provides an OpenAPI / Swagger specification, use it as **read-only reference context** for an LLM agent rather than feeding the raw spec into an OpenAPI code generator. Pass the relevant OpenAPI endpoint slice together with [`docs/llm.txt`](llm.txt) to the agent to generate a focused `.kdl` `(rest)struct` containing only the endpoints, GJSON field projections, and `@error` discriminators your application requires, then verify it with `parsmith check`.
 
 ### `@request` Properties
 
