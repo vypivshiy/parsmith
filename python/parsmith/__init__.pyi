@@ -57,6 +57,7 @@ ModelsMode = Literal["typeddict", "dataclass"]
 Bs4ParserMode = Literal["lxml", "html.parser", "html5lib"]
 HttpIoMode = Literal["both", "sync", "async"]
 SeverityLevel = Literal["error", "warning"]
+PathOrSourceInput = str | os.PathLike[str] | Sequence[str | os.PathLike[str]]
 
 def version() -> str: ...
 
@@ -141,7 +142,7 @@ class CodegenOptions:
         bs4_parser: str = "lxml",
         http_io: str = "both",
         separate_runtime: bool = False,
-        runtime_name: str = "parsmith_runtime",
+        runtime_name: str = ".parsmith_runtime",
         package: str = "main",
         module_stem: str | None = None,
         prologue: str | None = None,
@@ -480,14 +481,14 @@ class ModuleInfo:
     def __eq__(self, other: object) -> bool: ...
 
 def check(
-    source_or_path: str | os.PathLike[str],
+    source_or_path: PathOrSourceInput,
     *,
     sources: Mapping[str, str] | None = None,
     targets: Sequence[str] | None = None,
     path: str | None = None,
 ) -> CheckResult: ...
 def generate(
-    source_or_path: str | os.PathLike[str],
+    source_or_path: PathOrSourceInput,
     target: str = "python",
     *,
     sources: Mapping[str, str] | None = None,

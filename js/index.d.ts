@@ -50,6 +50,7 @@ export type HttpIoMode = "both" | "sync" | "async";
 export type SeverityLevel = "error" | "warning";
 
 export type PathInput = string | URL;
+export type BatchPathInput = PathInput | readonly PathInput[];
 export type SourcesInput = Record<string, string> | Map<string | URL, string>;
 
 export interface CheckOptionsInput {
@@ -481,12 +482,12 @@ export declare class ModuleInfo {
 }
 
 export declare function check(
-  sourceOrPath: PathInput,
+  sourceOrPath: BatchPathInput,
   options?: CheckOptionsInput | null
 ): CheckResult;
 
 export declare function generate(
-  sourceOrPath: PathInput,
+  sourceOrPath: BatchPathInput,
   targetOrOptions?:
     | TargetName
     | (string & {})

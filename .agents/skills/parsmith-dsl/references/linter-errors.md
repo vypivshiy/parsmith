@@ -10,12 +10,14 @@ parsmith version [-f text|json]
 parsmith json-to-kdl sample.json --name ResponseName -o schema.kdl
 curl -s https://api.example.com/v1/items/42 | parsmith json-to-kdl --name ItemPayload
 
-# 3. Validate schema (5-pass compiler: syntax, imports, selectors, regex, symbols, pipeline types)
+# 3. Validate schema(s) or directory (5-pass compiler: syntax, imports, selectors, regex, symbols, pipeline types)
 parsmith check schema.kdl -f json
-parsmith check schema.kdl -t py -t rs -t ex
+parsmith check schemas/ -t py -t rs -t ex
 
-# 4. Generate standalone parser / REST client across 9 targets
-parsmith generate py schema.kdl [-L bs4|lxml|parsel|selectolax] [--models typeddict|dataclass] [--http-io both|sync|async] [-R] -o out/
+# 4. Generate standalone parser / REST client across 9 targets (<PATHS>... accepts 1+ .kdl files or directories)
+#    Directory scan skips _*.kdl helper entrypoints; -R merges shared runtime helpers across the batch
+parsmith generate py schema.kdl [-L bs4|lxml|parsel|selectolax] [--models typeddict|dataclass] [--http-io both|sync|async] [-R] [--runtime-name .parsmith_runtime] -o out/
+parsmith generate py schemas/ -R -o out/         # emits <stem>.py (from .parsmith_runtime import ...) + parsmith_runtime.py
 parsmith generate ts schema.kdl -o out/
 parsmith generate js schema.kdl -o out/          # emits <stem>.js + <stem>.d.ts
 parsmith generate go schema.kdl [--package main] [-R] -o out/
@@ -26,9 +28,9 @@ parsmith generate cs schema.kdl [--package MyApp] [-R] -o out/
 parsmith generate kt schema.kdl [--package com.example] [-R] -o out/
 ```
 
-**Python (`parsmith-py`) & Node.js (`parsmith-js`) Host SDKs (with in-memory VFS `sources`):**
-- Python: `parsmith.check(src, *, sources=..., targets=...)`, `parsmith.generate(src, target="py", *, sources=...)`, `parsmith.inspect_schema(src, *, sources=...)`, `parsmith.json_to_kdl(json_str, name=...)`.
-- JS/TS: `check(src, { sources, targets })`, `generate(src, { target: "ts", sources })`, `inspectSchema(src, { sources })`, `jsonToKdl(jsonStr, name)`.
+**Python (`parsmith-py`) & Node.js (`parsmith-js`) Host SDKs (single file, directory, multi-path sequence, or in-memory VFS `sources`):**
+- Python: `parsmith.check(src_or_paths, *, sources=..., targets=...)`, `parsmith.generate(src_or_paths, target="py", *, separate_runtime=..., sources=...)`, `parsmith.inspect_schema(src, *, sources=...)`, `parsmith.json_to_kdl(json_str, name=...)`.
+- JS/TS: `check(srcOrPaths, { sources, targets })`, `generate(srcOrPaths, { target: "ts", separateRuntime, sources })`, `inspectSchema(src, { sources })`, `jsonToKdl(jsonStr, name)`.
 
 ---
 

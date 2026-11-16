@@ -986,4 +986,102 @@ describe("parsmith-js N-API SDK", () => {
 
     assert.throws(() => jsonToKdl("{broken json"));
   });
+
+  it("supports directory and multi-path batch check() and generate() with two-pass separateRuntime", () => {
+    withTempDir((tmpDir) => {
+      const commonPath = path.join(tmpDir, "_common.kdl");
+      fs.writeFileSync(
+        commonPath,
+        `
+        define HOST="https://kodik.example"
+        define SEARCH_REQ="curl '{{HOST}}/search?q={{query:str}}'"
+        `,
+        "utf-8"
+      );
+
+      const definesOnlyPath = path.join(tmpDir, "defines_only.kdl");
+      fs.writeFileSync(definesOnlyPath, 'define UNUSED_ONLY="1"\n', "utf-8");
+
+      const kodikPath = path.join(tmpDir, "kodik.kdl");
+      fs.writeFileSync(
+        kodikPath,
+        `
+        import "./_common.kdl" {
+            (define)HOST
+            (define)SEARCH_REQ
+        }
+        struct KodikPage {
+            @request SEARCH_REQ
+            title { css "h1.title"; text; trim }
+        }
+        `,
+        "utf-8"
+      );
+
+      const yummyPath = path.join(tmpDir, "yummy_anime.kdl");
+      fs.writeFileSync(
+        yummyPath,
+        `
+        json AnimeInfo {
+            id int
+            title str
+        }
+        (rest)struct YummyClient {
+            @request name="get_anime" response="AnimeInfo" """
+            GET /v1/anime/{{anime_id:int}} HTTP/1.1
+            Host: api.yummy.example
+            """
+        }
+        `,
+        "utf-8"
+      );
+
+      const optsPy = new CodegenOptions("python");
+      assert.equal(optsPy.runtimeName, ".parsmith_runtime");
+      optsPy.target = "go";
+      assert.equal(optsPy.runtimeName, "parsmith_runtime");
+
+      const chkDir = check(tmpDir);
+      assert.equal(chkDir.ok, true, chkDir.formatText());
+
+      const chkArr = check([kodikPath, pathToFileURL(yummyPath)]);
+      assert.equal(chkArr.ok, true, chkArr.formatText());
+
+      const resDir = generate(tmpDir, "python", { separateRuntime: true });
+      assert.equal(resDir.ok, true, resDir.formatText());
+      assert.deepEqual(Object.keys(resDir.files).sort(), [
+        "kodik.py",
+        "parsmith_runtime.py",
+        "yummy_anime.py",
+      ]);
+      assert.equal(resDir.hasFile("_common.py"), false);
+      assert.equal(resDir.hasFile("defines_only.py"), false);
+      assert.ok(
+        resDir.getFile("kodik.py").includes("from .parsmith_runtime import ")
+      );
+      assert.ok(
+        resDir
+          .getFile("yummy_anime.py")
+          .includes("from .parsmith_runtime import ")
+      );
+      const rtDir = resDir.getFile("parsmith_runtime.py");
+      assert.ok(rtDir.includes("async def rt_fetch_async("));
+      assert.ok(rtDir.includes("async def rt_rest_call_async("));
+
+      const resArr = generate(
+        [pathToFileURL(yummyPath), kodikPath],
+        "python",
+        { separateRuntime: true }
+      );
+      assert.equal(resArr.ok, true, resArr.formatText());
+      assert.deepEqual(Object.keys(resArr.files).sort(), [
+        "kodik.py",
+        "parsmith_runtime.py",
+        "yummy_anime.py",
+      ]);
+      const rtArr = resArr.getFile("parsmith_runtime.py");
+      assert.ok(rtArr.includes("async def rt_fetch_async("));
+      assert.ok(rtArr.includes("async def rt_rest_call_async("));
+    });
+  });
 });

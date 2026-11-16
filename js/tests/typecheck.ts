@@ -1,4 +1,5 @@
 import {
+  BatchPathInput,
   CheckMethodInfo,
   CheckResult,
   CodegenOptions,
@@ -66,6 +67,13 @@ const genRes1: GenerateResult = generate("entry.kdl", opts);
 const genRes2: GenerateResult = generate(new URL("file:///tmp/schema.kdl"), "ts", {
   moduleStem: "custom",
 });
+const batchPaths: BatchPathInput = ["a.kdl", new URL("file:///tmp/b.kdl")];
+const checkBatch: CheckResult = check(batchPaths, { targets: ["python"] });
+const genBatch: GenerateResult = generate(batchPaths, "python", {
+  separateRuntime: true,
+});
+void checkBatch;
+void genBatch;
 const code: string | null = genRes1.getFile("entry.py");
 const has: boolean = genRes2.hasFile("custom.ts");
 

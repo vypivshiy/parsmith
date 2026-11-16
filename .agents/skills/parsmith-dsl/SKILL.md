@@ -17,8 +17,8 @@ Compile `.kdl` schemas into standalone, zero-framework HTML/text parsers and typ
 1. **CLI subcommands**:
    - Version: `parsmith version [-f text|json]` (subcommand).
    - Bootstrap JSON schema: `parsmith json-to-kdl [<input.json>] --name <SchemaName> [-o <out.kdl>]` (accepts file path or `stdin`).
-   - Validate schema: `parsmith check <schema.kdl> [-f text|json] [-t <target>...]`.
-   - Generate code: `parsmith generate <py|ts|js|go|rs|ex|php|cs|kt> <schema.kdl> [-o <file_or_dir>] [TARGET_OPTIONS]`.
+   - Validate schema(s): `parsmith check <PATHS>... [-f text|json] [-t <target>...]` (accepts 1+ `.kdl` files or directories).
+   - Generate code: `parsmith generate <py|ts|js|go|rs|ex|php|cs|kt> <PATHS>... [-o <file_or_dir>] [TARGET_OPTIONS]` (accepts 1+ `.kdl` files or directories; skips `_*.kdl` helper files during directory scan and merges shared runtime helpers across the batch when `-R / --separate-runtime` is used; Python `-R` defaults `--runtime-name` to `.parsmith_runtime` emitting `from .parsmith_runtime import ...`).
 2. **Top-down declaration order (`E302`)**: declare helper `struct` and `json` schemas **above** any struct, `json` field, `nested`, `jsonify`, `@request response=`, or `@error` that references them.
 3. **Inline `json` schemas by default**: nest single-use child objects (`field { ... }` / `field Model { ... }`), object arrays (`field (array)ItemModel { ... }` — explicit `ItemModel` name is mandatory, `E001`), and maps (`field (dict) { @key str; @value ... }`) **inline** inside their parent `json` schema. Declare a standalone top-level `json` schema only when referenced directly by `@request response=`, `@error`, or `jsonify`, or when shared across 2+ schemas (declared above callers, `E302`).
 4. **Portable `json` field names (`E403`) & GJSON `from="..."` (`E040`, `E041`)**: `json` field names (after stripping `?`) must match `^[A-Za-z_][A-Za-z0-9_]*$` (`snake_case` or `camelCase`; no `kebab-case`, no colons `url: str`, no target keywords like `from`, `type`, `class`, `in`). Map reserved wire keys or nested GJSON paths via `from="..."` (e.g. `sender str from="from"`, `tag_names (array)str from="tags.#.name"`). Duplicate field or wire keys in one schema emit `E041`.
@@ -148,11 +148,13 @@ json ApiError { message str }
 ### Step 3 — Iterative Lint & Code Generation
 
 ```bash
-# 1. Validate schema (MANDATORY before returning .kdl or generating code; cap 5 retries per line)
+# 1. Validate schema or directory of schemas (MANDATORY before returning .kdl or generating code; cap 5 retries per line)
 parsmith check schema.kdl -f json
+parsmith check schemas/ -f json
 
-# 2. Generate standalone parser / REST client for any of the 9 targets
+# 2. Generate standalone parser / REST client for any of the 9 targets (single file, multiple files, or directory)
 parsmith generate py schema.kdl -L bs4 -o out/
+parsmith generate py schemas/ -R -o out/         # batch 2-pass shared runtime (from .parsmith_runtime import ...)
 parsmith generate ts schema.kdl -o out/
 parsmith generate go schema.kdl -o out/
 parsmith generate rs schema.kdl -o out/

@@ -27,12 +27,12 @@ Running `parsmith` without a subcommand prints `parsmith <version>` and exits wi
 Runs the 5-pass schema validation pipeline (KDL 2.0 parsing, transitive `import` resolution, structural linting, cross-target identifier checks, and pipeline type checking) without emitting target code.
 
 ```bash
-parsmith check <path.kdl> [-f text|json] [-t <target>...]
+parsmith check <PATHS>... [-f text|json] [-t <target>...]
 ```
 
 | Flag / Argument | Default | Description |
 | :--- | :--- | :--- |
-| `<path.kdl>` | *(required)* | Entry `.kdl` schema file to validate (along with all transitive `import` files). |
+| `<PATHS>...` | *(required)* | One or more `.kdl` schema files or directories to validate (along with all transitive `import` files). |
 | `-f`, `--format <text\|json>` | `text` | Diagnostic output format: `text` renders Rust-style annotated source snippets; `json` outputs a structured `{"diagnostics": [...]}` payload. |
 | `-t`, `--target <target>` | *(all 8 ecosystems)* | Target language(s) for Pass 4 identifier and reserved-keyword validation (`E403`, `E402`). Accepts `python`, `javascript`, `typescript`, `go`, `rust`, `elixir` (`ex`), `php`, `csharp` (`cs`), `kotlin` (`kt`). Repeatable. |
 
@@ -57,10 +57,10 @@ parsmith check schemas/catalog.kdl -f json
 
 ### `parsmith generate`
 
-Compiles a `.kdl` schema and emits standalone target code for `python`, `ts`, `js`, `go`, `rust`, `elixir` (`ex`), `php`, `csharp` (`cs`), or `kotlin` (`kt`).
+Compiles one or more `.kdl` schemas (or directories of `.kdl` schemas) and emits standalone target code for `python`, `ts`, `js`, `go`, `rust`, `elixir` (`ex`), `php`, `csharp` (`cs`), or `kotlin` (`kt`). During directory scans, `_*.kdl` helper files are skipped as root entrypoints, and `-R / --separate-runtime` aggregates runtime helpers across all compiled modules in a two-pass batch build.
 
 ```bash
-parsmith generate <target> <path.kdl> [-o <file_or_dir>] [TARGET_OPTIONS]
+parsmith generate <target> <PATHS>... [-o <file_or_dir>] [TARGET_OPTIONS]
 ```
 
 If compilation produces any `E000`–`E403` errors, diagnostics are printed to `stderr` (in `text` or `json` format) and `parsmith` exits with code `1` without writing output files.
@@ -96,7 +96,7 @@ parsmith generate python <path.kdl> [OPTIONS]
 | `--bs4-parser <PARSER>` | `lxml` | Underlying parser passed to `BeautifulSoup(..., "<PARSER>")` when `-L bs4`: `lxml`, `html.parser`, or `html5lib`. |
 | `--http-io <MODE>` | `both` | HTTP method emission mode for `@request` and `(rest)struct`: `both` (sync + `async_*`), `sync` only, or `async` only. |
 | `-R`, `--separate-runtime` | `false` | Emit shared `rt_*` / `Rt*` / `RT_*` helpers and HTTP transport adapters into `<runtime_name>.py` and import them from the parser module. |
-| `--runtime-name <NAME>` | `parsmith_runtime` | Module stem for the separate runtime file when `-R` is active. |
+| `--runtime-name <NAME>` | `.parsmith_runtime` | Module import path for the separate runtime file when `-R` is active (`.parsmith_runtime` emits `from .parsmith_runtime import ...` and writes `parsmith_runtime.py`; `parsmith_runtime` without a leading dot emits `from parsmith_runtime import ...`). |
 | `--prologue <CODE>` | *(none)* | Custom Python code injected after imports and runtime utilities. |
 | `--epilogue <CODE>` | *(none)* | Custom Python code appended at the end of the generated module. |
 | `-f`, `--format <text\|json>` | `text` | Diagnostic output format on `stderr`. |
