@@ -7,13 +7,14 @@ use std::str::FromStr;
 use parsmith::{
     Bs4Parser, CheckOptions, CodegenOptions, ErrorConditionValue, FsSourceLoader, HttpIo,
     MemorySourceLoader, PhpHtmlLib, PythonHtmlLib, PythonModels, Target, check_path_with_targets,
-    check_source_with_loader_and_targets, check_source_with_options, check_source_with_targets,
-    check_with_loader_and_targets, check_with_options, generate_path, generate_source,
-    generate_source_with_loader, generate_with_loader, inspect_module, parse_target_with_libs,
+    check_paths_with_targets, check_source_with_loader_and_targets, check_source_with_options,
+    check_source_with_targets, check_with_loader_and_targets, check_with_options, generate_path,
+    generate_paths, generate_source, generate_source_with_loader, generate_with_loader,
+    inspect_module, parse_target_with_libs,
 };
 use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyMapping, PySequence, PyString};
+use pyo3::types::{PyByteArray, PyBytes, PyDict, PyList, PyMapping, PySequence, PyString};
 
 fn json_value_to_py(py: Python<'_>, val: &serde_json::Value) -> PyResult<PyObject> {
     match val {
@@ -368,7 +369,7 @@ impl PyCodegenOptions {
         bs4_parser = "lxml",
         http_io = "both",
         separate_runtime = false,
-        runtime_name = parsmith::DEFAULT_RUNTIME_NAME,
+        runtime_name = None,
         package = "main",
         module_stem = None,
         prologue = None,
@@ -383,7 +384,7 @@ impl PyCodegenOptions {
         bs4_parser: &str,
         http_io: &str,
         separate_runtime: bool,
-        runtime_name: &str,
+        runtime_name: Option<&str>,
         package: &str,
         module_stem: Option<String>,
         prologue: Option<String>,
@@ -415,8 +416,10 @@ impl PyCodegenOptions {
             .with_bs4_parser(parse_bs4_parser(bs4_parser)?)
             .with_http_io(parse_http_io(http_io)?)
             .with_separate_runtime(separate_runtime)
-            .with_runtime_name(runtime_name)
             .with_package(package);
+        if let Some(rn) = runtime_name {
+            inner = inner.with_runtime_name(rn);
+        }
         inner.module_stem = module_stem;
         inner.prologue = prologue;
         inner.epilogue = epilogue;
@@ -431,7 +434,7 @@ impl PyCodegenOptions {
     #[setter]
     pub fn set_target(&mut self, value: &str) -> PyResult<()> {
         let (target, shorthand_py_lib, shorthand_php_lib) = parse_target_shorthand(value)?;
-        self.inner.target = target;
+        self.inner = self.inner.clone().with_target(target);
         if let Some(lib) = shorthand_py_lib {
             self.inner.html_lib = lib;
         }
@@ -1964,6 +1967,7 @@ impl PyModuleInfo {
 
 enum SourceOrPath {
     Path(String),
+    Paths(Vec<String>),
     Source(String),
 }
 
@@ -1981,6 +1985,40 @@ fn extract_raw_source_or_path(obj: &Bound<'_, PyAny>) -> PyResult<(String, bool)
     }
     Err(PyTypeError::new_err(
         "expected str or os.PathLike[str] for source_or_path",
+    ))
+}
+
+fn extract_source_or_paths(
+    obj: &Bound<'_, PyAny>,
+    has_vfs: Option<&MemorySourceLoader>,
+) -> PyResult<SourceOrPath> {
+    if let Ok((raw_str, is_pathlike)) = extract_raw_source_or_path(obj) {
+        return Ok(resolve_input_mode(&raw_str, is_pathlike, has_vfs));
+    }
+    if obj.is_instance_of::<PyBytes>()
+        || obj.is_instance_of::<PyByteArray>()
+        || obj.downcast::<PyMapping>().is_ok()
+    {
+        return Err(PyTypeError::new_err(
+            "expected str, os.PathLike[str], or Sequence[str | os.PathLike[str]] for source_or_path",
+        ));
+    }
+    if let Ok(seq) = obj.downcast::<PySequence>() {
+        let len = seq.len()?;
+        let mut paths = Vec::with_capacity(len);
+        for i in 0..len {
+            let item = seq.get_item(i)?;
+            let (raw_str, _) = extract_raw_source_or_path(&item).map_err(|_| {
+                PyTypeError::new_err(
+                    "sequence elements for source_or_path must be str or os.PathLike[str]",
+                )
+            })?;
+            paths.push(raw_str);
+        }
+        return Ok(SourceOrPath::Paths(paths));
+    }
+    Err(PyTypeError::new_err(
+        "expected str, os.PathLike[str], or Sequence[str | os.PathLike[str]] for source_or_path",
     ))
 }
 
@@ -2086,6 +2124,7 @@ fn resolve_codegen_options(
     let mut options_had_target = false;
     let mut options_had_html_lib = false;
     let mut options_had_php_html_lib = false;
+    let mut options_had_runtime_name = false;
     let mut pending_html_lib: Option<String> = None;
 
     if let Some(opt_obj) = options
@@ -2094,6 +2133,7 @@ fn resolve_codegen_options(
         if let Ok(py_opts) = opt_obj.extract::<PyRef<'_, PyCodegenOptions>>() {
             opts = py_opts.inner.clone();
             options_had_target = true;
+            options_had_runtime_name = true;
         } else if let Ok(mapping) = opt_obj.downcast::<PyMapping>() {
             let items = mapping.items()?;
             for item in items.iter() {
@@ -2106,7 +2146,11 @@ fn resolve_codegen_options(
                         let s: String = v_obj.extract()?;
                         let (parsed_target, shorthand_py_lib, shorthand_php_lib) =
                             parse_target_shorthand(&s)?;
-                        opts.target = parsed_target;
+                        if !options_had_runtime_name {
+                            opts = opts.with_target(parsed_target);
+                        } else {
+                            opts.target = parsed_target;
+                        }
                         if let Some(lib) = shorthand_py_lib
                             && !options_had_html_lib
                         {
@@ -2146,6 +2190,7 @@ fn resolve_codegen_options(
                     }
                     "runtime_name" | "runtime-name" => {
                         opts.runtime_name = v_obj.extract()?;
+                        options_had_runtime_name = true;
                     }
                     "package" | "namespace" => {
                         opts.package = v_obj.extract()?;
@@ -2175,7 +2220,11 @@ fn resolve_codegen_options(
 
     if let Some(t_str) = target {
         let (parsed_target, shorthand_py_lib, shorthand_php_lib) = parse_target_shorthand(t_str)?;
-        opts.target = parsed_target;
+        if !options_had_runtime_name {
+            opts = opts.with_target(parsed_target);
+        } else {
+            opts.target = parsed_target;
+        }
         if let Some(lib) = shorthand_py_lib
             && !options_had_html_lib
         {
@@ -2187,7 +2236,11 @@ fn resolve_codegen_options(
             opts.php_html_lib = php_lib;
         }
     } else if !options_had_target {
-        opts.target = Target::Python;
+        if !options_had_runtime_name {
+            opts = opts.with_target(Target::Python);
+        } else {
+            opts.target = Target::Python;
+        }
     }
 
     if let Some(ref hl) = pending_html_lib {
@@ -2257,7 +2310,7 @@ pub fn version() -> &'static str {
     parsmith::version()
 }
 
-/// Validates a KDL 2.0 schema (from a file path, inline KDL string, or in-memory VFS `sources` map).
+/// Validates a KDL 2.0 schema (from a file/directory path, sequence of paths, inline KDL string, or in-memory VFS `sources` map).
 #[pyfunction]
 #[pyo3(signature = (source_or_path, *, sources = None, targets = None, path = None))]
 pub fn check(
@@ -2266,20 +2319,55 @@ pub fn check(
     targets: Option<&Bound<'_, PyAny>>,
     path: Option<&str>,
 ) -> PyResult<PyCheckResult> {
-    let (raw_str, is_pathlike) = extract_raw_source_or_path(source_or_path)?;
     let vfs_loader = extract_sources_map(sources)?;
     let targets_vec = extract_targets(targets)?;
-    let mode = resolve_input_mode(&raw_str, is_pathlike, vfs_loader.as_ref());
+    let mode = extract_source_or_paths(source_or_path, vfs_loader.as_ref())?;
 
     let res = match (mode, vfs_loader) {
         (SourceOrPath::Path(entry), Some(loader)) => {
             check_with_loader_and_targets(&entry, &loader, targets_vec)
+        }
+        (SourceOrPath::Paths(entries), Some(loader)) => {
+            if entries.len() == 1 {
+                check_with_loader_and_targets(&entries[0], &loader, targets_vec)
+            } else {
+                let check_opts = match targets_vec {
+                    Some(iter) => CheckOptions::new().with_targets(iter),
+                    None => CheckOptions::default(),
+                };
+                let mut all_diagnostics = Vec::new();
+                let mut all_sources = BTreeMap::new();
+                let mut last_program = None;
+                let mut last_module = None;
+                for entry in &entries {
+                    let r = check_with_options(entry, &loader, &check_opts);
+                    for (k, v) in r.sources {
+                        all_sources.insert(k, v);
+                    }
+                    for d in r.diagnostics {
+                        if !all_diagnostics.contains(&d) {
+                            all_diagnostics.push(d);
+                        }
+                    }
+                    if r.program.is_some() {
+                        last_program = r.program;
+                    }
+                    if r.module.is_some() {
+                        last_module = r.module;
+                    }
+                }
+                parsmith::CheckResult::new(all_diagnostics)
+                    .with_sources(all_sources)
+                    .with_program(last_program)
+                    .with_module(last_module)
+            }
         }
         (SourceOrPath::Source(src), Some(loader)) => {
             let logical_path = path.unwrap_or("<memory>.kdl");
             check_source_with_loader_and_targets(&src, Some(logical_path), &loader, targets_vec)
         }
         (SourceOrPath::Path(entry), None) => check_path_with_targets(&entry, targets_vec),
+        (SourceOrPath::Paths(entries), None) => check_paths_with_targets(&entries, targets_vec),
         (SourceOrPath::Source(src), None) => check_source_with_targets(&src, path, targets_vec),
     };
 
@@ -2326,7 +2414,6 @@ pub fn generate(
     prologue: Option<&str>,
     epilogue: Option<&str>,
 ) -> PyResult<PyGenerateResult> {
-    let (raw_str, is_pathlike) = extract_raw_source_or_path(source_or_path)?;
     let vfs_loader = extract_sources_map(sources)?;
     let opts = resolve_codegen_options(
         target,
@@ -2345,15 +2432,38 @@ pub fn generate(
             epilogue,
         },
     )?;
-    let mode = resolve_input_mode(&raw_str, is_pathlike, vfs_loader.as_ref());
+    let mode = extract_source_or_paths(source_or_path, vfs_loader.as_ref())?;
 
     let res = match (mode, vfs_loader) {
         (SourceOrPath::Path(entry), Some(loader)) => generate_with_loader(&entry, &loader, &opts),
+        (SourceOrPath::Paths(entries), Some(loader)) => {
+            if entries.len() == 1 {
+                generate_with_loader(&entries[0], &loader, &opts)
+            } else {
+                let mut combined = parsmith::GenerateResult::default();
+                for entry in &entries {
+                    let r = generate_with_loader(entry, &loader, &opts);
+                    for (k, v) in r.files {
+                        combined.files.insert(k, v);
+                    }
+                    for (k, v) in r.sources {
+                        combined.sources.insert(k, v);
+                    }
+                    for d in r.diagnostics {
+                        if !combined.diagnostics.contains(&d) {
+                            combined.diagnostics.push(d);
+                        }
+                    }
+                }
+                combined
+            }
+        }
         (SourceOrPath::Source(src), Some(loader)) => {
             let logical_path = path.unwrap_or("<memory>.kdl");
             generate_source_with_loader(&src, Some(logical_path), &loader, &opts)
         }
         (SourceOrPath::Path(entry), None) => generate_path(&entry, &opts),
+        (SourceOrPath::Paths(entries), None) => generate_paths(&entries, &opts),
         (SourceOrPath::Source(src), None) => generate_source(&src, path, &opts),
     };
 
@@ -2389,6 +2499,7 @@ pub fn inspect_schema(
             let fs_loader = FsSourceLoader::new();
             check_source_with_options(&src, path, &fs_loader, &check_opts)
         }
+        (SourceOrPath::Paths(_), _) => unreachable!(),
     };
 
     Ok(PyModuleInfo::from_check_result(check_res))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import sys
 import types
@@ -405,8 +406,18 @@ def test_generate_python_html_lib_options_and_target_shorthands() -> None:
     opts_default = CodegenOptions()
     assert opts_default.target == "python"
     assert opts_default.html_lib == "bs4"
+    assert opts_default.runtime_name == ".parsmith_runtime"
     assert "html_lib=\"bs4\"" in repr(opts_default) or "html_lib='bs4'" in repr(opts_default)
     assert opts_default.to_dict()["html_lib"] == "bs4"
+    assert opts_default.to_dict()["runtime_name"] == ".parsmith_runtime"
+
+    opts_go_default = CodegenOptions("go")
+    assert opts_go_default.target == "go"
+    assert opts_go_default.runtime_name == "parsmith_runtime"
+    opts_go_default.target = "python"
+    assert opts_go_default.runtime_name == ".parsmith_runtime"
+    opts_go_default.target = "rust"
+    assert opts_go_default.runtime_name == "parsmith_runtime"
 
     opts_lxml = CodegenOptions("python", html_lib="lxml")
     assert opts_lxml.html_lib == "lxml"
@@ -940,5 +951,170 @@ def test_generate_elixir_php_csharp_kotlin_targets_and_php_html_lib() -> None:
     assert "package com.example.parsers" in res_kt["ArticleKt.kt"]
     assert "class Article(" in res_kt["ArticleKt.kt"]
     assert "object Rt" in res_kt["rt_kt.kt"]
+
+
+def test_directory_and_multi_path_batch_check_and_generate_separate_runtime(
+    tmp_path: Path,
+) -> None:
+    schemas_dir = tmp_path / "schemas"
+    schemas_dir.mkdir()
+
+    common_path = schemas_dir / "_common.kdl"
+    common_path.write_text(
+        '''
+        define HOST="https://kodik.example"
+        define SEARCH_REQ="curl '{{HOST}}/search?q={{query:str}}'"
+        extension NormExt {
+            clean {
+                sig str str
+                py {
+                    helper norm_title {
+                        source "def norm_title(s: str) -> str:\\n    return s.strip()"
+                    }
+                    emit "{{out}} = norm_title({{in}})"
+                }
+            }
+        }
+        ''',
+        encoding="utf-8",
+    )
+
+    defines_only_path = schemas_dir / "defines_only.kdl"
+    defines_only_path.write_text(
+        'define UNUSED_ONLY="1"\n',
+        encoding="utf-8",
+    )
+
+    kodik_path = schemas_dir / "kodik.kdl"
+    kodik_path.write_text(
+        '''
+        import "./_common.kdl" {
+            (define)HOST
+            (define)SEARCH_REQ
+            (extension)NormExt
+        }
+        struct KodikPage {
+            @request SEARCH_REQ
+            title { css "h1.title"; text; !NormExt.clean }
+        }
+        ''',
+        encoding="utf-8",
+    )
+
+    yummy_path = schemas_dir / "yummy_anime.kdl"
+    yummy_path.write_text(
+        '''
+        json AnimeInfo {
+            id int
+            title str
+        }
+        (rest)struct YummyClient {
+            @request name="get_anime" response="AnimeInfo" """
+            GET /v1/anime/{{anime_id:int}} HTTP/1.1
+            Host: api.yummy.example
+            """
+        }
+        ''',
+        encoding="utf-8",
+    )
+
+    # 1. Directory and multi-path check
+    chk_dir = parsmith.check(schemas_dir)
+    assert chk_dir.ok is True, chk_dir.format_text()
+
+    chk_multi = parsmith.check([kodik_path, yummy_path])
+    assert chk_multi.ok is True, chk_multi.format_text()
+
+    with pytest.raises(TypeError):
+        parsmith.check(b"not a str")  # type: ignore[arg-type]
+
+    # 2. Directory and multi-path generate with separate_runtime=True
+    res_dir = parsmith.generate(schemas_dir, "python", separate_runtime=True)
+    assert res_dir.ok is True, res_dir.format_text()
+    assert set(res_dir.files.keys()) == {
+        "kodik.py",
+        "yummy_anime.py",
+        "parsmith_runtime.py",
+    }
+    assert "_common.py" not in res_dir.files
+    assert "defines_only.py" not in res_dir.files
+    assert "from .parsmith_runtime import " in res_dir["kodik.py"]
+    assert "from .parsmith_runtime import " in res_dir["yummy_anime.py"]
+
+    res_multi = parsmith.generate(
+        [kodik_path, yummy_path], "python", separate_runtime=True
+    )
+    assert res_multi.ok is True, res_multi.format_text()
+    assert set(res_multi.files.keys()) == {
+        "kodik.py",
+        "yummy_anime.py",
+        "parsmith_runtime.py",
+    }
+    assert "from .parsmith_runtime import " in res_multi["kodik.py"]
+    assert "from .parsmith_runtime import " in res_multi["yummy_anime.py"]
+
+    # 3. Write generated package to disk and execute both KodikPage.fetch and YummyClient.get_anime end-to-end
+    pkg_dir = tmp_path / "my_scrapers"
+    pkg_dir.mkdir()
+    (pkg_dir / "__init__.py").write_text("", encoding="utf-8")
+    for fname, content in res_dir.files.items():
+        (pkg_dir / fname).write_text(content, encoding="utf-8")
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        rt_mod: Any = importlib.import_module("my_scrapers.parsmith_runtime")
+        kodik_mod: Any = importlib.import_module("my_scrapers.kodik")
+        yummy_mod: Any = importlib.import_module("my_scrapers.yummy_anime")
+
+        class MockSyncTransport:
+            def __init__(self, status: int, body: str, content_type: str) -> None:
+                self.status = status
+                self.body = body
+                self.content_type = content_type
+                self.last_url = ""
+                self.last_params: Any = []
+
+            def send(self, req: Any) -> Any:
+                self.last_url = req.url
+                self.last_params = req.params
+                return rt_mod.RawResponse(
+                    status=self.status,
+                    headers={"content-type": self.content_type},
+                    text=self.body,
+                )
+
+        # Execute HTML @request + user extension helper via KodikPage.fetch
+        html_transport = MockSyncTransport(
+            200,
+            '<html><body><h1 class="title">  Code Geass  </h1></body></html>',
+            "text/html",
+        )
+        kodik_page = kodik_mod.KodikPage.fetch(html_transport, query="geass")
+        assert html_transport.last_url == "https://kodik.example/search"
+        assert html_transport.last_params == {"q": "geass"}
+        assert kodik_page.parse() == {"title": "Code Geass"}
+
+        # Execute REST endpoint + JSON projection via YummyClient.get_anime
+        rest_transport = MockSyncTransport(
+            200,
+            '{"id": 77, "title": "Steins;Gate"}',
+            "application/json",
+        )
+        anime_res = yummy_mod.YummyClient.get_anime(rest_transport, anime_id=77)
+        assert rest_transport.last_url == "https://api.yummy.example/v1/anime/77"
+        assert isinstance(anime_res, rt_mod.Ok)
+        assert anime_res.is_ok is True
+        assert anime_res.value == {"id": 77, "title": "Steins;Gate"}
+    finally:
+        if str(tmp_path) in sys.path:
+            sys.path.remove(str(tmp_path))
+        for mod_name in [
+            "my_scrapers.yummy_anime",
+            "my_scrapers.kodik",
+            "my_scrapers.parsmith_runtime",
+            "my_scrapers",
+        ]:
+            sys.modules.pop(mod_name, None)
+
 
 

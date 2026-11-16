@@ -294,6 +294,14 @@ class CodegenOptions {
   }
   set target(val) {
     const [t, pyLib, phpLib] = parseTargetShorthand(val);
+    if (t === "python" && this._inner.runtime_name === "parsmith_runtime") {
+      this._inner.runtime_name = ".parsmith_runtime";
+    } else if (
+      t !== "python" &&
+      this._inner.runtime_name === ".parsmith_runtime"
+    ) {
+      this._inner.runtime_name = "parsmith_runtime";
+    }
     this._inner.target = t;
     if (pyLib) this._inner.html_lib = pyLib;
     if (phpLib) this._inner.php_html_lib = phpLib;
@@ -1278,6 +1286,7 @@ function applyOptionsFromObject(obj, state, allowCallContextKeys) {
     state.opts = { ...obj._inner };
     state.optionsHadHtmlLib = true;
     state.optionsHadPhpHtmlLib = true;
+    state.optionsHadRuntimeName = true;
     return;
   }
   for (const key of Object.keys(obj)) {
@@ -1288,6 +1297,19 @@ function applyOptionsFromObject(obj, state, allowCallContextKeys) {
         const s = extractReqString(v, "target");
         const [parsedTarget, shorthandPyLib, shorthandPhpLib] =
           parseTargetShorthand(s);
+        if (!state.optionsHadRuntimeName) {
+          if (
+            parsedTarget === "python" &&
+            state.opts.runtime_name === "parsmith_runtime"
+          ) {
+            state.opts.runtime_name = ".parsmith_runtime";
+          } else if (
+            parsedTarget !== "python" &&
+            state.opts.runtime_name === ".parsmith_runtime"
+          ) {
+            state.opts.runtime_name = "parsmith_runtime";
+          }
+        }
         state.opts.target = parsedTarget;
         if (shorthandPyLib && !state.optionsHadHtmlLib) {
           state.opts.html_lib = shorthandPyLib;
@@ -1343,6 +1365,7 @@ function applyOptionsFromObject(obj, state, allowCallContextKeys) {
       case "runtime_name":
       case "runtime-name": {
         state.opts.runtime_name = extractReqString(v, key);
+        state.optionsHadRuntimeName = true;
         break;
       }
       case "package":
@@ -1404,6 +1427,7 @@ function parseCodegenArgs(targetOrOptions, options, allowCallContextKeys) {
     },
     optionsHadHtmlLib: false,
     optionsHadPhpHtmlLib: false,
+    optionsHadRuntimeName: false,
     pendingHtmlLib: null,
     vfsMap: null,
     logicalPath: null,
@@ -1446,6 +1470,19 @@ function parseCodegenArgs(targetOrOptions, options, allowCallContextKeys) {
   if (explicitTarget !== null) {
     const [parsedTarget, shorthandPyLib, shorthandPhpLib] =
       parseTargetShorthand(explicitTarget);
+    if (!state.optionsHadRuntimeName) {
+      if (
+        parsedTarget === "python" &&
+        state.opts.runtime_name === "parsmith_runtime"
+      ) {
+        state.opts.runtime_name = ".parsmith_runtime";
+      } else if (
+        parsedTarget !== "python" &&
+        state.opts.runtime_name === ".parsmith_runtime"
+      ) {
+        state.opts.runtime_name = "parsmith_runtime";
+      }
+    }
     state.opts.target = parsedTarget;
     if (shorthandPyLib && !state.optionsHadHtmlLib) {
       state.opts.html_lib = shorthandPyLib;

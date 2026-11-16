@@ -1729,6 +1729,7 @@ pub fn inspect_schema(
             let fs_loader = FsSourceLoader::new();
             check_source_with_options(&src, logical_path.as_deref(), &fs_loader, &check_opts)
         }
+        (SourceOrPath::Paths(_), _) => unreachable!(),
     };
 
     Ok(ModuleInfo::from_check_result(check_res))

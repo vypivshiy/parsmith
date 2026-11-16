@@ -12,11 +12,11 @@ use napi::bindgen_prelude::*;
 use napi::{Env, JsFunction, JsObject, JsUnknown, NapiRaw};
 use napi_derive::napi;
 use parsmith::{
-    Bs4Parser, CodegenOptions as CoreCodegenOptions, HttpIo, MemorySourceLoader, PhpHtmlLib,
-    PythonHtmlLib, PythonModels, Target, check_path_with_targets,
-    check_source_with_loader_and_targets, check_source_with_targets, check_with_loader_and_targets,
-    generate_path, generate_source, generate_source_with_loader, generate_with_loader,
-    parse_target_with_libs,
+    Bs4Parser, CheckOptions, CodegenOptions as CoreCodegenOptions, HttpIo, MemorySourceLoader,
+    PhpHtmlLib, PythonHtmlLib, PythonModels, Target, check_path_with_targets,
+    check_paths_with_targets, check_source_with_loader_and_targets, check_source_with_targets,
+    check_with_loader_and_targets, check_with_options, generate_path, generate_paths,
+    generate_source, generate_source_with_loader, generate_with_loader, parse_target_with_libs,
 };
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
@@ -426,7 +426,7 @@ impl CodegenOptions {
     #[napi(setter)]
     pub fn set_target(&mut self, value: String) -> Result<()> {
         let (target, shorthand_py_lib, shorthand_php_lib) = parse_target_shorthand(&value)?;
-        self.inner.target = target;
+        self.inner = self.inner.clone().with_target(target);
         if let Some(lib) = shorthand_py_lib {
             self.inner.html_lib = lib;
         }
@@ -766,6 +766,7 @@ impl GenerateResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceOrPath {
     Path(String),
+    Paths(Vec<String>),
     Source(String),
 }
 
@@ -818,6 +819,26 @@ pub(crate) fn extract_raw_source_or_path(env: &Env, val: JsUnknown) -> Result<(S
             "expected string or file: URL for sourceOrPath",
         )),
     }
+}
+
+pub(crate) fn extract_source_or_paths(
+    env: &Env,
+    val: JsUnknown,
+    has_vfs: Option<&MemorySourceLoader>,
+) -> Result<SourceOrPath> {
+    if val.is_array()? {
+        let arr = val.coerce_to_object()?;
+        let len = arr.get_array_length()?;
+        let mut vec = Vec::with_capacity(len as usize);
+        for i in 0..len {
+            let elem: JsUnknown = arr.get_element(i)?;
+            let (raw_str, _) = extract_raw_source_or_path(env, elem)?;
+            vec.push(raw_str);
+        }
+        return Ok(SourceOrPath::Paths(vec));
+    }
+    let (raw_str, is_pathlike) = extract_raw_source_or_path(env, val)?;
+    Ok(resolve_input_mode(&raw_str, is_pathlike, has_vfs))
 }
 
 pub(crate) fn extract_sources_map(
@@ -956,6 +977,7 @@ pub(crate) struct ParsedCodegenCall {
     pub(crate) opts: CoreCodegenOptions,
     pub(crate) options_had_html_lib: bool,
     pub(crate) options_had_php_html_lib: bool,
+    pub(crate) options_had_runtime_name: bool,
     pub(crate) pending_html_lib: Option<String>,
     pub(crate) vfs_loader: Option<MemorySourceLoader>,
     pub(crate) logical_path: Option<String>,
@@ -967,6 +989,7 @@ impl Default for ParsedCodegenCall {
             opts: CodegenOptions::default_ts(),
             options_had_html_lib: false,
             options_had_php_html_lib: false,
+            options_had_runtime_name: false,
             pending_html_lib: None,
             vfs_loader: None,
             logical_path: None,
@@ -986,6 +1009,7 @@ pub(crate) fn apply_options_from_js_object(
         state.opts = cg_ref.inner.clone();
         state.options_had_html_lib = true;
         state.options_had_php_html_lib = true;
+        state.options_had_runtime_name = true;
         return Ok(());
     }
 
@@ -1000,7 +1024,11 @@ pub(crate) fn apply_options_from_js_object(
                 let s = extract_req_string(env, v_unk, "target")?;
                 let (parsed_target, shorthand_py_lib, shorthand_php_lib) =
                     parse_target_shorthand(&s)?;
-                state.opts.target = parsed_target;
+                if !state.options_had_runtime_name {
+                    state.opts = state.opts.clone().with_target(parsed_target);
+                } else {
+                    state.opts.target = parsed_target;
+                }
                 if let Some(lib) = shorthand_py_lib
                     && !state.options_had_html_lib
                 {
@@ -1039,6 +1067,7 @@ pub(crate) fn apply_options_from_js_object(
             }
             "runtimeName" | "runtime_name" | "runtime-name" => {
                 state.opts.runtime_name = extract_req_string(env, v_unk, &key)?;
+                state.options_had_runtime_name = true;
             }
             "package" | "namespace" => {
                 state.opts.package = extract_req_string(env, v_unk, &key)?;
@@ -1133,7 +1162,11 @@ pub(crate) fn parse_codegen_args(
 
     if let Some(t_str) = explicit_target {
         let (parsed_target, shorthand_py_lib, shorthand_php_lib) = parse_target_shorthand(&t_str)?;
-        state.opts.target = parsed_target;
+        if !state.options_had_runtime_name {
+            state.opts = state.opts.clone().with_target(parsed_target);
+        } else {
+            state.opts.target = parsed_target;
+        }
         if let Some(lib) = shorthand_py_lib
             && !state.options_had_html_lib
         {
@@ -1171,14 +1204,13 @@ pub fn version() -> String {
     parsmith::version().to_owned()
 }
 
-/// Validates a KDL 2.0 schema (from a file path, `file:` URL, inline KDL string, or in-memory VFS `sources` map).
+/// Validates a KDL 2.0 schema (from a file/directory path, `file:` URL, array of paths/URLs, inline KDL string, or in-memory VFS `sources` map).
 #[napi]
 pub fn check(
     env: Env,
     source_or_path: JsUnknown,
     options: Option<JsUnknown>,
 ) -> Result<CheckResult> {
-    let (raw_str, is_pathlike) = extract_raw_source_or_path(&env, source_or_path)?;
     let mut vfs_loader: Option<MemorySourceLoader> = None;
     let mut targets_vec: Option<Vec<String>> = None;
     let mut logical_path: Option<String> = None;
@@ -1214,16 +1246,52 @@ pub fn check(
         }
     }
 
-    let mode = resolve_input_mode(&raw_str, is_pathlike, vfs_loader.as_ref());
+    let mode = extract_source_or_paths(&env, source_or_path, vfs_loader.as_ref())?;
     let res = match (mode, vfs_loader) {
         (SourceOrPath::Path(entry), Some(loader)) => {
             check_with_loader_and_targets(&entry, &loader, targets_vec)
+        }
+        (SourceOrPath::Paths(entries), Some(loader)) => {
+            if entries.len() == 1 {
+                check_with_loader_and_targets(&entries[0], &loader, targets_vec)
+            } else {
+                let check_opts = match targets_vec {
+                    Some(iter) => CheckOptions::new().with_targets(iter),
+                    None => CheckOptions::default(),
+                };
+                let mut all_diagnostics = Vec::new();
+                let mut all_sources = BTreeMap::new();
+                let mut last_program = None;
+                let mut last_module = None;
+                for entry in &entries {
+                    let r = check_with_options(entry, &loader, &check_opts);
+                    for (k, v) in r.sources {
+                        all_sources.insert(k, v);
+                    }
+                    for d in r.diagnostics {
+                        if !all_diagnostics.contains(&d) {
+                            all_diagnostics.push(d);
+                        }
+                    }
+                    if r.program.is_some() {
+                        last_program = r.program;
+                    }
+                    if r.module.is_some() {
+                        last_module = r.module;
+                    }
+                }
+                parsmith::CheckResult::new(all_diagnostics)
+                    .with_sources(all_sources)
+                    .with_program(last_program)
+                    .with_module(last_module)
+            }
         }
         (SourceOrPath::Source(src), Some(loader)) => {
             let lp = logical_path.as_deref().unwrap_or("<memory>.kdl");
             check_source_with_loader_and_targets(&src, Some(lp), &loader, targets_vec)
         }
         (SourceOrPath::Path(entry), None) => check_path_with_targets(&entry, targets_vec),
+        (SourceOrPath::Paths(entries), None) => check_paths_with_targets(&entries, targets_vec),
         (SourceOrPath::Source(src), None) => {
             check_source_with_targets(&src, logical_path.as_deref(), targets_vec)
         }
@@ -1232,7 +1300,7 @@ pub fn check(
     Ok(CheckResult { inner: res })
 }
 
-/// Compiles a KDL 2.0 schema and generates target code (`"ts"` default, `"js"`, `"python"`, `"go"`, or `"rust"`).
+/// Compiles a KDL 2.0 schema and generates target code (`"ts"` default, `"js"`, `"python"`, `"go"`, `"rust"`, `"elixir"`, `"php"`, `"csharp"`, or `"kotlin"`).
 #[napi]
 pub fn generate(
     env: Env,
@@ -1240,20 +1308,42 @@ pub fn generate(
     target_or_options: Option<JsUnknown>,
     options: Option<JsUnknown>,
 ) -> Result<GenerateResult> {
-    let (raw_str, is_pathlike) = extract_raw_source_or_path(&env, source_or_path)?;
     let parsed = parse_codegen_args(&env, target_or_options, options, true)?;
     let opts = parsed.opts;
     let vfs_loader = parsed.vfs_loader;
     let logical_path = parsed.logical_path;
 
-    let mode = resolve_input_mode(&raw_str, is_pathlike, vfs_loader.as_ref());
+    let mode = extract_source_or_paths(&env, source_or_path, vfs_loader.as_ref())?;
     let res = match (mode, vfs_loader) {
         (SourceOrPath::Path(entry), Some(loader)) => generate_with_loader(&entry, &loader, &opts),
+        (SourceOrPath::Paths(entries), Some(loader)) => {
+            if entries.len() == 1 {
+                generate_with_loader(&entries[0], &loader, &opts)
+            } else {
+                let mut combined = parsmith::GenerateResult::default();
+                for entry in &entries {
+                    let r = generate_with_loader(entry, &loader, &opts);
+                    for (k, v) in r.files {
+                        combined.files.insert(k, v);
+                    }
+                    for (k, v) in r.sources {
+                        combined.sources.insert(k, v);
+                    }
+                    for d in r.diagnostics {
+                        if !combined.diagnostics.contains(&d) {
+                            combined.diagnostics.push(d);
+                        }
+                    }
+                }
+                combined
+            }
+        }
         (SourceOrPath::Source(src), Some(loader)) => {
             let lp = logical_path.as_deref().unwrap_or("<memory>.kdl");
             generate_source_with_loader(&src, Some(lp), &loader, &opts)
         }
         (SourceOrPath::Path(entry), None) => generate_path(&entry, &opts),
+        (SourceOrPath::Paths(entries), None) => generate_paths(&entries, &opts),
         (SourceOrPath::Source(src), None) => generate_source(&src, logical_path.as_deref(), &opts),
     };
 

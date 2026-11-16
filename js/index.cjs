@@ -88,6 +88,9 @@ function normalizePathInput(input) {
     }
     return { __parsmithPath__: fileURLToPath(input) };
   }
+  if (Array.isArray(input)) {
+    return input.map((item) => normalizePathInput(item));
+  }
   return input;
 }
 
