@@ -192,3 +192,160 @@ fn cli_generate_python_html_lib_flags() {
         );
     }
 }
+
+#[test]
+fn cli_generate_python_directory_batch_and_separate_runtime() {
+    let tmp = CliTempDir::new("dir_batch_rt");
+    let schemas_dir = tmp.path.join("schemas");
+    fs::create_dir_all(&schemas_dir).expect("create schemas dir");
+
+    tmp.write("schemas/_common.kdl", "define CLEAN_TEXT { text; trim }\n");
+    let kodik_file = tmp.write(
+        "schemas/kodik.kdl",
+        r#"import "./_common.kdl" { (define)CLEAN_TEXT }
+struct KodikSearch {
+    @request "curl https://kodik.example/search"
+    title { css "h1"; CLEAN_TEXT }
+}
+"#,
+    );
+    let yummy_file = tmp.write(
+        "schemas/yummy_anime.kdl",
+        r#"json YummyItem {
+    id int
+    title str
+}
+(rest)struct YummyClient {
+    @request "curl https://api.yummy.example/items/1" name="get_item" response=YummyItem
+}
+"#,
+    );
+
+    let out_dir = tmp.path.join("out_pkg");
+    let out = Command::new(parsmith_bin())
+        .args([
+            "generate",
+            "python",
+            &schemas_dir.to_string_lossy(),
+            "-o",
+            &out_dir.to_string_lossy(),
+            "-R",
+        ])
+        .output()
+        .expect("run parsmith generate python <dir> -o <out_dir> -R");
+    assert!(
+        out.status.success(),
+        "expected exit 0, stdout: {}, stderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(!out_dir.join("_common.py").exists());
+    assert!(out_dir.join("kodik.py").exists());
+    assert!(out_dir.join("yummy_anime.py").exists());
+    assert!(out_dir.join("parsmith_runtime.py").exists());
+
+    let kodik_src = fs::read_to_string(out_dir.join("kodik.py")).unwrap();
+    let yummy_src = fs::read_to_string(out_dir.join("yummy_anime.py")).unwrap();
+    let runtime_src = fs::read_to_string(out_dir.join("parsmith_runtime.py")).unwrap();
+
+    assert!(
+        kodik_src.contains("from .parsmith_runtime import "),
+        "expected relative runtime import in kodik.py, got:\n{kodik_src}"
+    );
+    assert!(
+        yummy_src.contains("from .parsmith_runtime import "),
+        "expected relative runtime import in yummy_anime.py, got:\n{yummy_src}"
+    );
+    assert!(
+        runtime_src.contains("def rt_fetch_async("),
+        "expected rt_fetch_async in parsmith_runtime.py"
+    );
+    assert!(
+        runtime_src.contains("def rt_rest_call_async("),
+        "expected rt_rest_call_async in parsmith_runtime.py"
+    );
+    assert!(
+        runtime_src.contains("class Ok("),
+        "expected class Ok in parsmith_runtime.py"
+    );
+
+    // Also test explicit multi-file paths with --runtime-name parsmith_runtime (non-relative)
+    let out_dir_abs = tmp.path.join("out_abs");
+    let out_abs = Command::new(parsmith_bin())
+        .args([
+            "generate",
+            "python",
+            &kodik_file.to_string_lossy(),
+            &yummy_file.to_string_lossy(),
+            "-o",
+            &out_dir_abs.to_string_lossy(),
+            "-R",
+            "--runtime-name",
+            "parsmith_runtime",
+        ])
+        .output()
+        .expect("run parsmith generate python <file1> <file2> -o <out_dir> -R --runtime-name parsmith_runtime");
+    assert!(out_abs.status.success());
+
+    let kodik_abs_src = fs::read_to_string(out_dir_abs.join("kodik.py")).unwrap();
+    let yummy_abs_src = fs::read_to_string(out_dir_abs.join("yummy_anime.py")).unwrap();
+    assert!(kodik_abs_src.contains("from parsmith_runtime import "));
+    assert!(yummy_abs_src.contains("from parsmith_runtime import "));
+}
+
+#[test]
+fn cli_generate_multi_input_requires_output_directory() {
+    let tmp = CliTempDir::new("multi_out_err");
+    let schemas_dir = tmp.path.join("schemas");
+    fs::create_dir_all(&schemas_dir).expect("create schemas dir");
+
+    let file1 = tmp.write("schemas/a.kdl", "struct A { title { css \"h1\"; text } }\n");
+    let file2 = tmp.write("schemas/b.kdl", "struct B { title { css \"h2\"; text } }\n");
+
+    // 1. Directory without -o
+    let out_no_o = Command::new(parsmith_bin())
+        .args(["generate", "python", &schemas_dir.to_string_lossy()])
+        .output()
+        .expect("run parsmith generate python <dir> without -o");
+    assert!(!out_no_o.status.success());
+    let stderr_no_o = String::from_utf8_lossy(&out_no_o.stderr);
+    assert!(stderr_no_o.contains(
+        "output directory (-o / --output <DIR>) is required when compiling a directory or multiple .kdl files"
+    ));
+
+    // 2. Multiple files with -o -
+    let out_dash = Command::new(parsmith_bin())
+        .args([
+            "generate",
+            "python",
+            &file1.to_string_lossy(),
+            &file2.to_string_lossy(),
+            "-o",
+            "-",
+        ])
+        .output()
+        .expect("run parsmith generate python <file1> <file2> -o -");
+    assert!(!out_dash.status.success());
+    let stderr_dash = String::from_utf8_lossy(&out_dash.stderr);
+    assert!(stderr_dash.contains(
+        "output directory (-o / --output <DIR>) is required when compiling a directory or multiple .kdl files"
+    ));
+
+    // 3. Directory with explicit output file -o out.py
+    let out_file = Command::new(parsmith_bin())
+        .args([
+            "generate",
+            "python",
+            &schemas_dir.to_string_lossy(),
+            "-o",
+            "out.py",
+        ])
+        .output()
+        .expect("run parsmith generate python <dir> -o out.py");
+    assert!(!out_file.status.success());
+    let stderr_file = String::from_utf8_lossy(&out_file.stderr);
+    assert!(stderr_file.contains(
+        "output path 'out.py' must be a directory when compiling a directory or multiple .kdl files"
+    ));
+}

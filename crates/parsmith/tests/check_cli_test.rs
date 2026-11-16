@@ -133,3 +133,60 @@ fn cli_check_target_filtering_and_default_four_ecosystems() {
         .expect("run parsmith check --target python");
     assert!(out_py.status.success());
 }
+
+#[test]
+fn cli_check_directory_and_multi_file_paths() {
+    let tmp = CliTempDir::new("dir_multi");
+    let schemas_dir = tmp.path.join("schemas");
+    fs::create_dir_all(&schemas_dir).expect("create schemas dir");
+
+    tmp.write("schemas/_common.kdl", "define CLEAN_TEXT { text; trim }\n");
+    let file_a = tmp.write(
+        "schemas/a.kdl",
+        "import \"./_common.kdl\" { (define)CLEAN_TEXT }\nstruct A {\n    title { css \"h1\"; CLEAN_TEXT }\n}\n",
+    );
+    let file_b = tmp.write(
+        "schemas/b.kdl",
+        "struct B {\n    name { css \"span\"; text }\n}\n",
+    );
+
+    // 1. Check entire directory -> exits 0
+    let out_dir = Command::new(parsmith_bin())
+        .args(["check", &schemas_dir.to_string_lossy()])
+        .output()
+        .expect("run parsmith check <dir>");
+    assert!(
+        out_dir.status.success(),
+        "expected exit 0 for directory check, stdout: {}, stderr: {}",
+        String::from_utf8_lossy(&out_dir.stdout),
+        String::from_utf8_lossy(&out_dir.stderr)
+    );
+
+    // 2. Check multiple explicit files -> exits 0
+    let out_multi = Command::new(parsmith_bin())
+        .args([
+            "check",
+            &file_a.to_string_lossy(),
+            &file_b.to_string_lossy(),
+        ])
+        .output()
+        .expect("run parsmith check <file1> <file2>");
+    assert!(out_multi.status.success());
+
+    // 3. Invalid file in multi-file list -> exits 1
+    let file_bad = tmp.write("schemas/bad.kdl", "struct Bad {\n    x { trim }\n}\n");
+    let out_invalid = Command::new(parsmith_bin())
+        .args([
+            "check",
+            &file_a.to_string_lossy(),
+            &file_bad.to_string_lossy(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("run parsmith check with invalid file");
+    assert_eq!(out_invalid.status.code(), Some(1));
+    let parsed: CheckResult =
+        serde_json::from_str(&String::from_utf8_lossy(&out_invalid.stdout)).unwrap();
+    assert!(parsed.has_errors());
+}
