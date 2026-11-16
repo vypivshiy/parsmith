@@ -27,29 +27,30 @@ pub use ast::{
     TypedStep,
 };
 pub use check::{
-    CheckOptions, check_path, check_path_with_targets, check_source, check_source_with_loader,
+    CheckOptions, check_path, check_path_with_targets, check_paths, check_paths_with_options,
+    check_paths_with_targets, check_source, check_source_with_loader,
     check_source_with_loader_and_targets, check_source_with_options, check_source_with_targets,
     check_with_loader, check_with_loader_and_targets, check_with_options, compile_path,
     compile_source, compile_source_with_loader, compile_source_with_options, compile_with_loader,
     compile_with_options,
 };
 pub use codegen::{
-    Bs4Parser, Bs4Spelling, CSharpEmitter, CodeWriter, CodegenOptions, DEFAULT_RUNTIME_NAME,
-    DomSpelling, ElixirEmitter, GenerateResult, GoEmitter, HelperDef, HttpIo, JsTsEmitter,
-    JsTsMode, KotlinEmitter, LanguageEmitter, LxmlSpelling, ModuleBuilder, ParselSpelling, PhpDom,
-    PhpDomCrawlerSpelling, PhpDomSpelling, PhpEmitter, PhpHtmlLib, PhpNativeSpelling,
-    PyDomSpelling, PythonDom, PythonEmitter, PythonHtmlLib, PythonModels, RustEmitter,
-    SelectolaxSpelling, Target, WriteMode, drive_module, drive_single_pass, drive_struct,
-    emit_csharp_module, emit_csharp_runtime_module, emit_dts_module, emit_elixir_module,
-    emit_elixir_runtime_module, emit_go_module, emit_go_runtime_module, emit_js_module,
-    emit_kotlin_module, emit_kotlin_runtime_module, emit_php_module, emit_php_runtime_module,
-    emit_python_module, emit_python_runtime_module, emit_rust_module, emit_rust_runtime_module,
-    emit_ts_module, format_elixir_module_prefix, generate_module, generate_path, generate_source,
-    generate_source_with_loader, generate_with_loader, module_has_fetch, module_has_html,
-    module_has_rest, module_has_table, module_has_xpath, module_uses_http, normalize_php_namespace,
-    parse_target_or_shorthand, parse_target_with_libs, validate_csharp_namespace,
-    validate_elixir_package_name, validate_go_package_name, validate_kotlin_package_name,
-    validate_php_namespace,
+    Bs4Parser, Bs4Spelling, CSharpEmitter, CodeWriter, CodegenOptions, DEFAULT_PYTHON_RUNTIME_NAME,
+    DEFAULT_RUNTIME_NAME, DomSpelling, ElixirEmitter, GenerateResult, GoEmitter, HelperDef, HttpIo,
+    JsTsEmitter, JsTsMode, KotlinEmitter, LanguageEmitter, LxmlSpelling, ModuleBuilder,
+    ParselSpelling, PhpDom, PhpDomCrawlerSpelling, PhpDomSpelling, PhpEmitter, PhpHtmlLib,
+    PhpNativeSpelling, PyDomSpelling, PythonDom, PythonEmitter, PythonHtmlLib, PythonModels,
+    RustEmitter, SelectolaxSpelling, Target, WriteMode, drive_module, drive_single_pass,
+    drive_struct, emit_csharp_module, emit_csharp_runtime_module, emit_dts_module,
+    emit_elixir_module, emit_elixir_runtime_module, emit_go_module, emit_go_runtime_module,
+    emit_js_module, emit_kotlin_module, emit_kotlin_runtime_module, emit_php_module,
+    emit_php_runtime_module, emit_python_module, emit_python_runtime_module, emit_rust_module,
+    emit_rust_runtime_module, emit_ts_module, format_elixir_module_prefix, generate_module,
+    generate_path, generate_paths, generate_source, generate_source_with_loader,
+    generate_with_loader, module_has_fetch, module_has_html, module_has_rest, module_has_table,
+    module_has_xpath, module_uses_http, normalize_php_namespace, parse_target_or_shorthand,
+    parse_target_with_libs, validate_csharp_namespace, validate_elixir_package_name,
+    validate_go_package_name, validate_kotlin_package_name, validate_php_namespace,
 };
 pub use diagnostic::{CheckResult, Diagnostic, DiagnosticCode, Severity};
 pub use gjson::{
@@ -82,7 +83,7 @@ pub use linter::symbols::{
 pub use linter::{DefineEntry, UnitEnv, did_you_mean_hint, lint_program, suggest_closest};
 pub use loader::{
     FsSourceLoader, LoadedSource, LoaderError, MemorySourceLoader, MemorySourceMap, SourceLoader,
-    normalize_fs_path, normalize_virtual_path, resolve_virtual_relative,
+    expand_kdl_input_paths, normalize_fs_path, normalize_virtual_path, resolve_virtual_relative,
 };
 pub use lowering::{clean_doc, lower_program};
 pub use request::{
