@@ -21,8 +21,16 @@ A KDL `(rest)struct` that describes HTTP requests, typed JSON response schemas, 
 _Avoid_: HTML client, OpenAPI converter
 
 **Pipeline**:
-An ordered sequence of KDL operations transforming an input value into a typed output, with an optional terminal `fallback` literal.
+An ordered sequence of KDL operations transforming parser input, a cached `@init` field (`@name`), or a literal value seed (`value=<literal>`) into a typed output, with optional auto-cast to a declared field type and an optional terminal `fallback` literal.
 _Avoid_: imperative IR block
+
+**Value property (`value=<literal>`)**:
+A scalar literal property (`str`, `int`, `float`, `bool`, with `{{UPPER_NAME}}` interpolation in strings) on a `struct`, `@init`, or `json` field that injects a constant value into the generated output model or seeds the initial value of a field pipeline without reading the parser input document or wire JSON.
+_Avoid_: `const` pipeline step, `@val` directive, `classvar`
+
+**Field type annotation**:
+A postfix Go-style type specifier (`<field> <type>`)—mandatory on `json` fields and optional on `struct` and `@init` fields—that enforces the field's output type (`E100`) and automatically inserts `to-bool`, `to-int`, or `to-float` before any terminal `fallback` when a `struct` pipeline requires scalar conversion.
+_Avoid_: prefix KDL node type annotation (`(str)field`), implicit `text` extraction
 
 **Cond (condition expression)**:
 The recursive algebraic condition tree (`Cond::And`, `Cond::Or`, `Cond::Not`, `Cond::Atom(CondOp)`) and leaf operations (`CondOp`, `CondValue`) evaluated inside `filter`, `assert`, and `match` pipeline steps.
@@ -69,7 +77,7 @@ A deterministic path expression (supporting object keys, escaped literal dots `\
 _Avoid_: JSONPath, JMESPath
 
 **JSON projector**:
-A generated schema-specific allowlist function that validates container structure, extracts declared fields and GJSON paths, enforces `?` nullability and `@omitempty` rules, drops undeclared wire keys, and raises a schema-qualified decode error on contract mismatch.
+A generated schema-specific allowlist function that validates container structure, extracts declared fields and GJSON paths, injects scalar `value=<literal>` constants, enforces `?` nullability and `@omitempty` rules, drops undeclared wire keys, and raises a schema-qualified decode error on contract mismatch.
 _Avoid_: runtime schema descriptor table
 
 ## Frontend & Validation Architecture
