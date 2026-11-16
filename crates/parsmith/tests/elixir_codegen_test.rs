@@ -499,6 +499,75 @@ fn elixir_target_parsing_and_two_pass_dry_run_zero_allocation() {
     assert!(emitted.contains("# epilogue"));
 }
 
+const SCHEMA_VALUE_AND_AUTOCAST: &str = r#"
+define SOURCE="habr"
+
+struct FeedCard {
+    @init {
+        seed_ver int value=1
+        seed_tag str value="{{SOURCE}}" { upper }
+    }
+
+    source str value="{{SOURCE}}"
+    kind value="article"
+    version int value=2
+    ratio float value=1.5
+    is_live bool value=#false
+    seeded str value="{{SOURCE}}" { upper }
+    from_init str { @seed_tag }
+    views int { css ".views"; text; fallback 0 }
+    score float { css ".score"; text; fallback 0.0 }
+    has_badge bool { css ".badge" }
+    tags (array)int { css-all ".tag"; text }
+}
+
+json ReleaseCard {
+    source str value="{{SOURCE}}"
+    version int value=1
+    ratio float value=2.5
+    is_live bool value=#true
+    id str from="node_id"
+}
+
+json OnlyConstants {
+    source str value="{{SOURCE}}"
+    version int value=1
+}
+"#;
+
+#[test]
+fn elixir_value_constants_and_postfix_autocast() {
+    let opts = CodegenOptions::new(Target::Elixir);
+    let res = generate_source(SCHEMA_VALUE_AND_AUTOCAST, Some("value_cast.kdl"), &opts);
+    assert!(!res.has_errors(), "{:?}", res.diagnostics);
+    let code = res.primary_code().unwrap();
+
+    // StepOp::Value in @init and struct fields uses `_v` to avoid Elixir unused variable warnings
+    assert!(code.contains("defp init_seed_ver(_self, _v) do\n    v1 = 1\n    v1\n  end"));
+    assert!(code.contains(
+        "defp init_seed_tag(_self, _v) do\n    v1 = \"habr\"\n    v2 = Rt.upper(v1)\n    v2\n  end"
+    ));
+    assert!(code.contains("defp parse_source(_self, _v) do\n    v1 = \"habr\"\n    v1\n  end"));
+    assert!(code.contains("defp parse_version(_self, _v) do\n    v1 = 2\n    v1\n  end"));
+    assert!(code.contains("defp parse_ratio(_self, _v) do\n    v1 = 1.5\n    v1\n  end"));
+    assert!(code.contains("defp parse_is_live(_self, _v) do\n    v1 = false\n    v1\n  end"));
+    assert!(code.contains(
+        "defp parse_seeded(_self, _v) do\n    v1 = \"habr\"\n    v2 = Rt.upper(v1)\n    v2\n  end"
+    ));
+
+    // Postfix auto-cast in struct fields
+    assert!(code.contains("Rt.to_int("));
+    assert!(code.contains("Rt.to_float("));
+    assert!(code.contains("Rt.node_bool("));
+
+    // JsonFieldDef.value in json projector
+    assert!(code.contains("f_source = \"habr\""));
+    assert!(code.contains("f_version = 1"));
+    assert!(code.contains("f_ratio = 2.5"));
+    assert!(code.contains("f_is_live = true"));
+    assert!(code.contains("_ = Rt.expect_object!(value, \"OnlyConstants\")"));
+}
+
 #[test]
 fn elixir_all_integration_schemas_generate_cleanly() {
     let schemas_dir =
@@ -600,6 +669,7 @@ fn elixir_toolchain_check_and_execution() {
         ("SepHtmlFn", SCHEMA_HTML_FN),
         ("SepExt", SCHEMA_EXTENSIONS),
         ("SepJson", SCHEMA_CATALOG_JSON_PROJECTORS),
+        ("SepValueCast", SCHEMA_VALUE_AND_AUTOCAST),
     ];
 
     let mut parallel_files = Vec::new();
@@ -832,6 +902,32 @@ defmodule ToolchainRunner do
     assert_eq(match?({{:error, _}}, SepJson.GeoLocationJson.from_value([1, 2])), true, "reject array root")
     assert_eq(match?({{:error, _}}, SepJson.GeoLocationJson.from_value(nil)), true, "reject null root")
     assert_eq(match?({{:error, _}}, SepJson.GeoLocationJson.from_value(%{{ "lat" => "bad", "lng" => 1.0 }})), true, "reject bad float")
+
+    # 3b. Value constants and postfix auto-cast
+    vc_html = ~s(<div><span class="views">42</span><span class="score">9.5</span><span class="badge">ok</span><span class="tag">10</span><span class="tag">20</span></div>)
+    vc_res = SepValueCast.FeedCard.parse(vc_html)
+    assert_eq(vc_res.source, "habr", "vc_res.source")
+    assert_eq(vc_res.kind, "article", "vc_res.kind")
+    assert_eq(vc_res.version, 2, "vc_res.version")
+    assert_eq(vc_res.ratio, 1.5, "vc_res.ratio")
+    assert_eq(vc_res.is_live, false, "vc_res.is_live")
+    assert_eq(vc_res.seeded, "HABR", "vc_res.seeded")
+    assert_eq(vc_res.from_init, "HABR", "vc_res.from_init")
+    assert_eq(vc_res.views, 42, "vc_res.views")
+    assert_eq(vc_res.score, 9.5, "vc_res.score")
+    assert_eq(vc_res.has_badge, true, "vc_res.has_badge")
+    assert_eq(vc_res.tags, [10, 20], "vc_res.tags")
+
+    rc_res = SepValueCast.ReleaseCardJson.from_json!(~s({{"node_id":"rel-1"}}))
+    assert_eq(rc_res.source, "habr", "rc_res.source")
+    assert_eq(rc_res.version, 1, "rc_res.version")
+    assert_eq(rc_res.ratio, 2.5, "rc_res.ratio")
+    assert_eq(rc_res.is_live, true, "rc_res.is_live")
+    assert_eq(rc_res.id, "rel-1", "rc_res.id")
+
+    oc_res = SepValueCast.OnlyConstantsJson.from_json!(~s({{}}))
+    assert_eq(oc_res.source, "habr", "oc_res.source")
+    assert_eq(oc_res.version, 1, "oc_res.version")
 
     # 4. Live loopback HTTP fetch and REST client
     {{:ok, listen}} = :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true])

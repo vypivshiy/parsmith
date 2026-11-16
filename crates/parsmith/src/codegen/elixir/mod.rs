@@ -386,7 +386,11 @@ impl ElixirEmitter {
     }
 
     fn pipeline_uses_v(pipeline: &Pipeline) -> bool {
-        pipeline.steps.is_empty() || !matches!(pipeline.steps[0].op, StepOp::LoadInit { .. })
+        pipeline.steps.is_empty()
+            || !matches!(
+                pipeline.steps[0].op,
+                StepOp::LoadInit { .. } | StepOp::Value { .. }
+            )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -564,7 +568,10 @@ impl ElixirEmitter {
         let prefix = format_elixir_module_prefix(&self.options.package);
 
         match &step.op {
-            StepOp::Value { .. } => {}
+            StepOp::Value { value } => {
+                let lit = elixir_literal(value);
+                wln!(writer, "{nxt} = {lit}");
+            }
             StepOp::LoadInit { name } => {
                 let f_name = elixir_field_name(name);
                 wln!(writer, "{nxt} = self.{f_name}");
