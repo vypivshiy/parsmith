@@ -36,8 +36,9 @@ pub enum OutputFormat {
 enum Commands {
     /// Validate a KDL 2.0 schema file and its imports without generating code
     Check {
-        /// Path to the .kdl schema file to validate
-        path: PathBuf,
+        /// Path(s) to .kdl schema file(s) or directory(ies) to validate
+        #[arg(required = true, num_args = 1.., value_name = "PATHS")]
+        paths: Vec<PathBuf>,
 
         /// Diagnostic output format (`text` or `json`)
         #[arg(long, short = 'f', value_enum, default_value_t = OutputFormat::Text)]
@@ -82,8 +83,9 @@ enum GenerateTarget {
     /// Generate Python 3.10+ parser code (`bs4` / `lxml` / `parsel` / `selectolax`, `TypedDict` / `dataclass`)
     #[command(visible_alias = "py")]
     Python {
-        /// Path to the .kdl schema file to compile
-        path: PathBuf,
+        /// Path(s) to .kdl schema file(s) or directory(ies) to compile
+        #[arg(required = true, num_args = 1.., value_name = "PATHS")]
+        paths: Vec<PathBuf>,
 
         /// Output file or directory path (writes to stdout when omitted or `-`)
         #[arg(short = 'o', long = "output", value_name = "OUTPUT")]
@@ -110,7 +112,7 @@ enum GenerateTarget {
         separate_runtime: bool,
 
         /// Module name for the separate runtime file
-        #[arg(long = "runtime-name", default_value = parsmith::DEFAULT_RUNTIME_NAME, value_name = "NAME")]
+        #[arg(long = "runtime-name", default_value = parsmith::DEFAULT_PYTHON_RUNTIME_NAME, value_name = "NAME")]
         runtime_name: String,
 
         /// Custom code block injected after imports and runtime utilities
@@ -137,8 +139,9 @@ enum GenerateTarget {
     /// Generate Go 1.26+ (`goquery`, `net/http`, `gjson`) parser and REST client code
     #[command(name = "go", visible_alias = "golang")]
     Go {
-        /// Path to the .kdl schema file to compile
-        path: PathBuf,
+        /// Path(s) to .kdl schema file(s) or directory(ies) to compile
+        #[arg(required = true, num_args = 1.., value_name = "PATHS")]
+        paths: Vec<PathBuf>,
 
         /// Output file or directory path (writes to stdout when omitted or `-`)
         #[arg(short = 'o', long = "output", value_name = "OUTPUT")]
@@ -177,8 +180,9 @@ enum GenerateTarget {
     /// Generate Rust (`dom_query` + `serde` + `reqwest`) parser and REST client code
     #[command(name = "rust", visible_alias = "rs")]
     Rust {
-        /// Path to the .kdl schema file to compile
-        path: PathBuf,
+        /// Path(s) to .kdl schema file(s) or directory(ies) to compile
+        #[arg(required = true, num_args = 1.., value_name = "PATHS")]
+        paths: Vec<PathBuf>,
 
         /// Output file or directory path (writes to stdout when omitted or `-`)
         #[arg(short = 'o', long = "output", value_name = "OUTPUT")]
@@ -208,8 +212,9 @@ enum GenerateTarget {
     /// Generate Elixir 1.18+ (`Floki`, built-in `JSON`, `:httpc` / `Req`) parser and REST client code
     #[command(name = "elixir", visible_alias = "ex")]
     Elixir {
-        /// Path to the .kdl schema file to compile
-        path: PathBuf,
+        /// Path(s) to .kdl schema file(s) or directory(ies) to compile
+        #[arg(required = true, num_args = 1.., value_name = "PATHS")]
+        paths: Vec<PathBuf>,
 
         /// Output file or directory path (writes to stdout when omitted or `-`)
         #[arg(short = 'o', long = "output", value_name = "OUTPUT")]
@@ -248,8 +253,9 @@ enum GenerateTarget {
     /// Generate PHP 8.1+ (`ext-dom` / `symfony/dom-crawler`, `JsonSerializable`, `ext-curl` / `Guzzle`) parser and REST client code
     #[command(name = "php")]
     Php {
-        /// Path to the .kdl schema file to compile
-        path: PathBuf,
+        /// Path(s) to .kdl schema file(s) or directory(ies) to compile
+        #[arg(required = true, num_args = 1.., value_name = "PATHS")]
+        paths: Vec<PathBuf>,
 
         /// Output file or directory path (writes to stdout when omitted or `-`)
         #[arg(short = 'o', long = "output", value_name = "OUTPUT")]
@@ -292,8 +298,9 @@ enum GenerateTarget {
     /// Generate C# / .NET 8+ (`AngleSharp`, `System.Text.Json`, `HttpClient`) parser and REST client code
     #[command(name = "csharp", visible_alias = "cs")]
     CSharp {
-        /// Path to the .kdl schema file to compile
-        path: PathBuf,
+        /// Path(s) to .kdl schema file(s) or directory(ies) to compile
+        #[arg(required = true, num_args = 1.., value_name = "PATHS")]
+        paths: Vec<PathBuf>,
 
         /// Output file or directory path (writes to stdout when omitted or `-`)
         #[arg(short = 'o', long = "output", value_name = "OUTPUT")]
@@ -332,8 +339,9 @@ enum GenerateTarget {
     /// Generate Kotlin / JVM (`org.jsoup:jsoup`, `kotlinx.serialization.json`, `java.net.http.HttpClient`) parser and REST client code
     #[command(name = "kotlin", visible_alias = "kt")]
     Kotlin {
-        /// Path to the .kdl schema file to compile
-        path: PathBuf,
+        /// Path(s) to .kdl schema file(s) or directory(ies) to compile
+        #[arg(required = true, num_args = 1.., value_name = "PATHS")]
+        paths: Vec<PathBuf>,
 
         /// Output file or directory path (writes to stdout when omitted or `-`)
         #[arg(short = 'o', long = "output", value_name = "OUTPUT")]
@@ -372,8 +380,9 @@ enum GenerateTarget {
 
 #[derive(Debug, Args)]
 struct JsTsGenerateArgs {
-    /// Path to the .kdl schema file to compile
-    path: PathBuf,
+    /// Path(s) to .kdl schema file(s) or directory(ies) to compile
+    #[arg(required = true, num_args = 1.., value_name = "PATHS")]
+    paths: Vec<PathBuf>,
 
     /// Output file or directory path (writes to stdout when omitted or `-`)
     #[arg(short = 'o', long = "output", value_name = "OUTPUT")]
@@ -501,12 +510,28 @@ fn format_version(format: OutputFormat) -> String {
 }
 
 fn execute_generate(
-    path: &Path,
+    paths: &[PathBuf],
     output: Option<&Path>,
     mut opts: CodegenOptions,
     format: OutputFormat,
 ) -> Result<ExitCode, String> {
-    if let Some(out_path) = output
+    let is_multi_input = paths.len() > 1 || paths.first().is_some_and(|p| p.is_dir());
+    if is_multi_input {
+        if output.is_none() || output == Some(Path::new("-")) {
+            return Err(
+                "output directory (-o / --output <DIR>) is required when compiling a directory or multiple .kdl files"
+                    .to_string(),
+            );
+        }
+        if let Some(out_path) = output
+            && is_explicit_output_file(out_path)
+        {
+            return Err(format!(
+                "output path '{}' must be a directory when compiling a directory or multiple .kdl files",
+                out_path.display()
+            ));
+        }
+    } else if let Some(out_path) = output
         && out_path != Path::new("-")
         && is_explicit_output_file(out_path)
         && let Some(stem) = out_path.file_stem().and_then(|s| s.to_str())
@@ -515,7 +540,7 @@ fn execute_generate(
         opts = opts.with_module_stem(stem);
     }
 
-    let res = parsmith::generate_path(path, &opts);
+    let res = parsmith::generate_paths(paths, &opts);
     if !res.diagnostics.is_empty() {
         match format {
             OutputFormat::Text => {
@@ -544,13 +569,13 @@ fn execute_jsts_generate(target: Target, args: JsTsGenerateArgs) -> Result<ExitC
     if let Some(e) = args.epilogue {
         opts = opts.with_epilogue(e);
     }
-    execute_generate(&args.path, args.output.as_deref(), opts, args.format)
+    execute_generate(&args.paths, args.output.as_deref(), opts, args.format)
 }
 
 fn run(cli: Cli) -> Result<ExitCode, String> {
     match cli.command {
         Some(Commands::Check {
-            path,
+            paths,
             format,
             target,
         }) => {
@@ -559,7 +584,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             } else {
                 Some(target)
             };
-            let result = parsmith::check_path_with_targets(&path, targets_opt);
+            let result = parsmith::check_paths_with_targets(&paths, targets_opt);
             match format {
                 OutputFormat::Text => {
                     let rendered = result.format_text();
@@ -579,7 +604,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         }
         Some(Commands::Generate { target }) => match target {
             GenerateTarget::Python {
-                path,
+                paths,
                 output,
                 html_lib,
                 models,
@@ -604,12 +629,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 if let Some(e) = epilogue {
                     opts = opts.with_epilogue(e);
                 }
-                execute_generate(&path, output.as_deref(), opts, format)
+                execute_generate(&paths, output.as_deref(), opts, format)
             }
             GenerateTarget::Ts(args) => execute_jsts_generate(Target::TypeScript, args),
             GenerateTarget::Js(args) => execute_jsts_generate(Target::JavaScript, args),
             GenerateTarget::Go {
-                path,
+                paths,
                 output,
                 package,
                 separate_runtime,
@@ -628,10 +653,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 if let Some(e) = epilogue {
                     opts = opts.with_epilogue(e);
                 }
-                execute_generate(&path, output.as_deref(), opts, format)
+                execute_generate(&paths, output.as_deref(), opts, format)
             }
             GenerateTarget::Rust {
-                path,
+                paths,
                 output,
                 separate_runtime,
                 runtime_name,
@@ -648,10 +673,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 if let Some(e) = epilogue {
                     opts = opts.with_epilogue(e);
                 }
-                execute_generate(&path, output.as_deref(), opts, format)
+                execute_generate(&paths, output.as_deref(), opts, format)
             }
             GenerateTarget::Elixir {
-                path,
+                paths,
                 output,
                 package,
                 separate_runtime,
@@ -670,10 +695,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 if let Some(e) = epilogue {
                     opts = opts.with_epilogue(e);
                 }
-                execute_generate(&path, output.as_deref(), opts, format)
+                execute_generate(&paths, output.as_deref(), opts, format)
             }
             GenerateTarget::Php {
-                path,
+                paths,
                 output,
                 html_lib,
                 package,
@@ -694,10 +719,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 if let Some(e) = epilogue {
                     opts = opts.with_epilogue(e);
                 }
-                execute_generate(&path, output.as_deref(), opts, format)
+                execute_generate(&paths, output.as_deref(), opts, format)
             }
             GenerateTarget::CSharp {
-                path,
+                paths,
                 output,
                 package,
                 separate_runtime,
@@ -716,10 +741,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 if let Some(e) = epilogue {
                     opts = opts.with_epilogue(e);
                 }
-                execute_generate(&path, output.as_deref(), opts, format)
+                execute_generate(&paths, output.as_deref(), opts, format)
             }
             GenerateTarget::Kotlin {
-                path,
+                paths,
                 output,
                 package,
                 separate_runtime,
@@ -738,7 +763,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 if let Some(e) = epilogue {
                     opts = opts.with_epilogue(e);
                 }
-                execute_generate(&path, output.as_deref(), opts, format)
+                execute_generate(&paths, output.as_deref(), opts, format)
             }
         },
         Some(Commands::JsonToKdl {
