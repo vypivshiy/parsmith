@@ -140,6 +140,10 @@ _Avoid_: manual indent string concatenation, `block(open, close, ...)` wrappers 
 An idempotent accumulator populated during Pass 1 (`DryRun`) that records parser-level imports (`require_import`) separately from unified `HelperDef` definitions and runtime-scoped imports (`require_std`, `require_std_with_imports`, `require_runtime`) before Pass 2 emits the file header or separated runtime module.
 _Avoid_: single-pass forward-declaring emitter, conflating parser imports with separated runtime helper imports
 
+**Shared runtime aggregation**:
+Two-pass batch code generation (`-R / --separate-runtime`) over a directory or list of `.kdl` schemas that merges `ModuleBuilder` helper registrations and runtime capability flags across all compiled modules in Pass 1 to emit a single unified `<runtime_name>.<ext>` module before writing individual parser modules in Pass 2.
+_Avoid_: per-file runtime overwrite, last-file-wins tree-shaking
+
 **Runtime namespace (`rt`)**:
 The unified naming convention for all generated runtime helpers, error classes, JSON projectors, table sentinels, DOM type aliases, and REST error matcher tables across targets (`rt_<snake>` / `Rt<Pascal>` / `RT_<UPPER>` in Python; exported `rt<Pascal>` / `Rt<Pascal>` / `RT_<UPPER>` in TypeScript and JavaScript; package-private `rt<Pascal>` and exported `Rt<Pascal>` in Go; `rt::*` module with `rt::RtError` and `RT_<UPPER>` in Rust; `Rt.*` module in Elixir; `Rt::*` class in PHP; `Rt.*` static class in C#; `Rt.*` object in Kotlin), while keeping the public HTTP transport and monadic REST result contracts (`HttpRequest`, `RawResponse`, `TransportError`, `SyncTransport`, `AsyncTransport`, `HttpTransport`, `via_*`, `With*`, `Ok`, `UnknownErr`, `TransportErr`, `DecodeErr`, `ErrMatcher`) unprefixed.
 _Avoid_: `std_*` / `std*` prefix, legacy `ssc_*` / `ssc*` / `Ssc*` prefix, leading-underscore `_` module helpers
