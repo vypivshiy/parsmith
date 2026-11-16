@@ -485,7 +485,8 @@ fn normalize_inline_type_annotations(source: &str) -> std::borrow::Cow<'_, str> 
                     let is_bare_modifier = rest_trimmed.starts_with('{')
                         || rest_trimmed.starts_with('@')
                         || rest_trimmed.starts_with("from=")
-                        || rest_trimmed.starts_with("path=");
+                        || rest_trimmed.starts_with("path=")
+                        || rest_trimmed.starts_with("value=");
 
                     if is_bare_modifier {
                         changed = true;

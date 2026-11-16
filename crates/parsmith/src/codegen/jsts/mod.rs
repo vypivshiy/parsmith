@@ -589,6 +589,7 @@ impl JsTsEmitter {
         let is_ts = self.mode.is_ts();
 
         match &step.op {
+            StepOp::Value { .. } => {}
             StepOp::LoadInit { name } => {
                 let camel = to_camel_case(name);
                 wln!(writer, "let {nxt} = this._{camel};");

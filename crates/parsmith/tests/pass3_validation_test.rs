@@ -1297,3 +1297,153 @@ struct Main {
         res_imported.diagnostics
     );
 }
+
+#[test]
+fn field_types_and_value_constants_linter_validation() {
+    // 1. Valid struct, @init, and json with postfix types and value= constants
+    let valid_src = r#"
+define SOURCE="habr"
+extension Feed {
+    now_ts {
+        sig int int
+        py { emit "{{out}} = {{in}}" }
+        js { emit "const {{out}} = {{in}};" }
+        go { emit "{{out}} := {{in}}" }
+        rust { emit "let {{out}} = {{in}};" }
+    }
+    gen_id {
+        sig str str
+        py { emit "{{out}} = {{in}}" }
+        js { emit "const {{out}} = {{in}};" }
+        go { emit "{{out}} := {{in}}" }
+        rust { emit "let {{out}} = {{in}};" }
+    }
+}
+
+(list)struct HabrFeed {
+    @split-doc { css-all "article.item" }
+    @init {
+        fetched_at int value=0 { !Feed.now_ts }
+        const_init str value="{{SOURCE}}"
+    }
+    source str value="{{SOURCE}}"
+    kind value="article"
+    version int value=1
+    rating float value=4.5
+    is_live bool value=#false
+    id str value="{{SOURCE}}" { !Feed.gen_id }
+    title str { css "a.title"; text; trim }
+    subtitle str? { css ".lead"; text; trim; fallback #null }
+    tags (array)str { css-all ".tag"; text; trim }
+    has_hubs bool { css ".hubs" }
+    views int { css ".views"; text; fallback 0 }
+}
+
+json ReleaseCard {
+    source str value="{{SOURCE}}"
+    raw_source str from="source"
+    version int value=1
+    score float value=9.5
+    is_live bool value=#false
+    id str from="node_id"
+}
+"#;
+    let res_ok = check_source(valid_src, Some("valid_types_val.kdl"));
+    assert!(
+        !res_ok.has_errors(),
+        "expected no errors, got: {:?}",
+        res_ok.diagnostics
+    );
+
+    // 2. Prefix type annotation on struct or @init field -> E001 with postfix hint
+    let res_prefix = check_source(
+        "struct S {\n    (str)title { css \"h1\"; text }\n}\n",
+        Some("prefix.kdl"),
+    );
+    let d_prefix = res_prefix
+        .errors()
+        .find(|d| d.code == DiagnosticCode::E001)
+        .expect("expected E001 for (str)title");
+    assert!(d_prefix.message.contains("prefix type annotation '(str)'"));
+    assert!(d_prefix.hint.as_deref().unwrap_or("").contains("title str"));
+
+    // 3. Invalid field arguments / properties / empty block alongside value= -> E001
+    let e001_cases = [
+        "struct S { title str int { css \"a\"; text } }",
+        "struct S { title unknown_type { css \"a\"; text } }",
+        "struct S { title (tuple)str { css \"a\"; text } }",
+        "struct S { title 123 { css \"a\"; text } }",
+        "struct S { title foo=\"bar\" { css \"a\"; text } }",
+        "struct S { source value=\"habr\" {} }",
+        "struct S { @init { x value=\"a\" {} }; f { @x } }",
+        "json J { a str? value=\"x\" }",
+        "json J { a? str value=\"x\" }",
+        "json J { a (array)str value=\"x\" }",
+        "json J { (array)a str value=\"x\" }",
+        "json J { a str @omitempty value=\"x\" }",
+        "json J { a str @skip value=\"x\" }",
+        "json J { a str from=\"wire\" value=\"x\" }",
+        "json J { a str \"wire\" value=\"x\" }",
+        "json J { a value=\"x\" { id int } }",
+        "json J {\n    a (dict) value=\"x\" { @key str; @value str }\n}",
+    ];
+    for src in e001_cases {
+        let codes = error_codes(src);
+        assert!(
+            codes.contains(&DiagnosticCode::E001),
+            "expected E001 for: {src}, got: {codes:?}"
+        );
+    }
+
+    // 4. value=#null or block define interpolation in value= -> E002
+    let e002_cases = [
+        "struct S { f value=#null }",
+        "json J { f str value=#null }",
+        "define BLK { css \"a\"; text }\nstruct S { f value=\"{{BLK}}\" }",
+        "define BLK { id int }\njson J { f str value=\"{{BLK}}\" }",
+    ];
+    for src in e002_cases {
+        let codes = error_codes(src);
+        assert!(
+            codes.contains(&DiagnosticCode::E002),
+            "expected E002 for: {src}, got: {codes:?}"
+        );
+    }
+
+    // 5. Undefined {{DEFINE}} in value= -> E300
+    assert!(
+        error_codes("struct S { f value=\"{{MISSING_DEF}}\" }").contains(&DiagnosticCode::E300)
+    );
+    assert!(
+        error_codes("json J { f str value=\"{{MISSING_DEF}}\" }").contains(&DiagnosticCode::E300)
+    );
+
+    // 6. Standalone value= type mismatch on struct or json field -> E100
+    let e100_cases = [
+        "struct S { version int value=\"one\" }",
+        "struct S { tags (array)str value=\"a\" }",
+        "struct S { opt str? value=\"a\" }",
+        "json J { version int value=\"one\" }",
+        "json J { name str value=42 }",
+        "json Sub { id int }\njson J { sub Sub value=1 }",
+    ];
+    for src in e100_cases {
+        let codes = error_codes(src);
+        assert!(
+            codes.contains(&DiagnosticCode::E100),
+            "expected E100 for: {src}, got: {codes:?}"
+        );
+    }
+
+    // 7. value= on (table)struct regular field -> E203
+    let table_val_src = r#"
+(table)struct T {
+    @table { css "table" }
+    @rows { css-all "tr" }
+    @match { css "th"; text }
+    @value { css "td"; text }
+    col value="const"
+}
+"#;
+    assert!(error_codes(table_val_src).contains(&DiagnosticCode::E203));
+}

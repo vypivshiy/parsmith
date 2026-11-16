@@ -555,6 +555,7 @@ impl<D: PhpDomSpelling> PhpEmitter<D> {
         let ctx_lit = php_str(context);
 
         match &step.op {
+            StepOp::Value { .. } => {}
             StepOp::LoadInit { name } => {
                 let snake = php_ident(name);
                 wln!(writer, "${nxt} = $this->_{snake};");

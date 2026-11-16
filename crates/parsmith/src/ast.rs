@@ -469,6 +469,9 @@ pub struct JsonFieldDef {
     /// Value type when `is_dict == true`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_type: Option<TypeInfo>,
+    /// Optional constant literal value (`value=<literal>`) injected directly by the projector without reading wire JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<LiteralValue>,
     /// Source span of the field node.
     pub span: Span,
 }
@@ -829,6 +832,8 @@ impl Cond {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "kebab-case")]
 pub enum StepOp {
+    /// `value=<literal>` constant or initial pipeline seed value.
+    Value { value: LiteralValue },
     /// `@<name>` load from cached `@init` precomputed field.
     LoadInit { name: String },
     /// `css <query>` or `css { <q1>; <q2> }`.

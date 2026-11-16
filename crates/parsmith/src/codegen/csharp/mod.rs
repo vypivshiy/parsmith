@@ -494,6 +494,7 @@ impl CSharpEmitter {
         let ctx_lit = csharp_str(context);
 
         match &step.op {
+            StepOp::Value { .. } => {}
             StepOp::LoadInit { name } => {
                 let snake = to_snake_case(name);
                 wln!(writer, "var {nxt} = this._init_{snake};");

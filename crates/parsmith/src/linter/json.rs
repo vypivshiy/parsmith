@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::kdl::{NodeId, NodeRef};
+use crate::kdl::{KdlValue, NodeId, NodeRef};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode};
 use crate::gjson::is_malformed_gjson_path;
@@ -374,6 +374,7 @@ fn lint_single_json(
     let mut field_names: HashSet<String> = node
         .children()
         .into_iter()
+        .filter(|c| c.prop("value").is_none())
         .map(|c| c.name().trim_end_matches('?').to_owned())
         .collect();
     let mut visiting_defines = HashSet::new();
@@ -542,6 +543,7 @@ fn lint_dict_json_block(
                 let mut sub_field_names: HashSet<String> = child
                     .children()
                     .into_iter()
+                    .filter(|c| c.prop("value").is_none())
                     .map(|c| c.name().trim_end_matches('?').to_owned())
                     .collect();
                 let mut sub_visiting = HashSet::new();
@@ -594,7 +596,10 @@ fn lint_json_children<'a>(
         let clean_field_name = field_name.trim_end_matches('?');
 
         // Block define expansion
-        if field_node.args().is_empty() && !field_node.has_children_block() {
+        if field_node.args().is_empty()
+            && field_node.props().is_empty()
+            && !field_node.has_children_block()
+        {
             if let Some(&DefineEntry::Block {
                 ref unit_path,
                 node_id,
@@ -604,7 +609,9 @@ fn lint_json_children<'a>(
                     if let Some(def_unit) = program.units.get(unit_path) {
                         let def_node = def_unit.document.node(node_id);
                         for c in def_node.children() {
-                            field_names.insert(c.name().trim_end_matches('?').to_owned());
+                            if c.prop("value").is_none() {
+                                field_names.insert(c.name().trim_end_matches('?').to_owned());
+                            }
                         }
                         lint_json_children(
                             unit,
@@ -669,7 +676,10 @@ fn lint_json_children<'a>(
         }
 
         for prop in field_node.props() {
-            if !matches!(prop.key.as_str(), "from" | "path" | "doc" | "type") {
+            if !matches!(
+                prop.key.as_str(),
+                "from" | "path" | "doc" | "type" | "value"
+            ) {
                 diags.push(make_error(
                     &unit.path,
                     DiagnosticCode::E001,
@@ -678,7 +688,7 @@ fn lint_json_children<'a>(
                         "unknown property '{}' on json field '{field_name}'",
                         prop.key
                     ),
-                    "allowed properties on json field: from, doc",
+                    "allowed properties on json field: from, value, doc",
                 ));
             }
         }
@@ -686,6 +696,7 @@ fn lint_json_children<'a>(
         let is_dict_field = is_dict_json_field(field_node);
         let mut has_type = false;
         let mut has_skip = false;
+        let mut has_omitempty = false;
         let mut value_args: Vec<&str> = Vec::new();
 
         for (idx, arg) in field_node.args().iter().enumerate() {
@@ -712,6 +723,8 @@ fn lint_json_children<'a>(
                 }
                 if arg_str == "@skip" {
                     has_skip = true;
+                } else if arg_str == "@omitempty" {
+                    has_omitempty = true;
                 }
             } else {
                 if let Some(ann) = arg.ty() {
@@ -817,6 +830,7 @@ fn lint_json_children<'a>(
             let mut sub_field_names: HashSet<String> = field_node
                 .children()
                 .into_iter()
+                .filter(|c| c.prop("value").is_none())
                 .map(|c| c.name().trim_end_matches('?').to_owned())
                 .collect();
             lint_json_children(
@@ -855,7 +869,9 @@ fn lint_json_children<'a>(
                 format!("remove or rename the duplicate '{field_name}' field"),
             ));
         }
-        field_names.insert(clean_field_name.to_owned());
+        if field_node.prop("value").is_none() {
+            field_names.insert(clean_field_name.to_owned());
+        }
 
         let positional_alias = if value_args.len() > 1 && !has_children {
             value_args[1]
@@ -871,6 +887,151 @@ fn lint_json_children<'a>(
                 "positional JSON key alias is deprecated, use from=\"...\" instead",
                 format!("example: {field_name} {type_repr} from=\"{positional_alias}\""),
             ));
+        }
+
+        if let Some(val_prop) = field_node.prop("value") {
+            let lit_type_str: Option<&str> = match &val_prop.value {
+                KdlValue::String(s) => {
+                    for token in crate::linter::top_level::extract_double_brace_tokens(s) {
+                        if crate::linter::is_define_name(token) {
+                            if !env.defines.contains_key(token)
+                                && !env.all_program_defines.contains(token)
+                            {
+                                diags.push(make_error(
+                                    &unit.path,
+                                    DiagnosticCode::E300,
+                                    val_prop.value_span,
+                                    format!("undefined define '{token}' in value=\"{s}\""),
+                                    format!("declare 'define {token}=\"...\"' before use"),
+                                ));
+                            } else if matches!(
+                                env.defines.get(token),
+                                Some(DefineEntry::Block { .. })
+                            ) {
+                                diags.push(make_error(
+                                    &unit.path,
+                                    DiagnosticCode::E002,
+                                    val_prop.value_span,
+                                    format!(
+                                        "cannot interpolate block define '{token}' in value=\"{s}\""
+                                    ),
+                                    format!("use a scalar define: define {token}=\"...\""),
+                                ));
+                            }
+                        }
+                    }
+                    Some("str")
+                }
+                KdlValue::Int(_) => Some("int"),
+                KdlValue::Float(_) => Some("float"),
+                KdlValue::Bool(_) => Some("bool"),
+                KdlValue::Null => {
+                    diags.push(make_error(
+                        &unit.path,
+                        DiagnosticCode::E002,
+                        val_prop.value_span,
+                        format!("'value' on json field '{field_name}' cannot be #null"),
+                        "use a scalar str, int, float, or bool literal",
+                    ));
+                    None
+                }
+            };
+
+            let is_nullable = field_name.ends_with('?')
+                || field_node.ty().is_some_and(|t| t.ends_with('?'))
+                || value_args.iter().any(|a| a.ends_with('?'));
+            let is_array = field_node.ty() == Some("array")
+                || field_node.args().iter().any(|a| {
+                    a.ty() == Some("array") || a.value.as_str().unwrap_or("").starts_with("(array)")
+                });
+
+            if has_children || is_empty_block || is_dict_field {
+                diags.push(make_error(
+                    &unit.path,
+                    DiagnosticCode::E001,
+                    val_prop.span,
+                    format!(
+                        "cannot combine 'value=' with inline object or dict block on json field '{field_name}'"
+                    ),
+                    "use 'value=<literal>' only on scalar str, int, float, or bool fields",
+                ));
+            }
+            if is_nullable {
+                diags.push(make_error(
+                    &unit.path,
+                    DiagnosticCode::E001,
+                    val_prop.span,
+                    format!(
+                        "cannot combine 'value=' with nullable '?' on json field '{field_name}'"
+                    ),
+                    "remove '?' when using 'value=<literal>'",
+                ));
+            }
+            if is_array {
+                diags.push(make_error(
+                    &unit.path,
+                    DiagnosticCode::E001,
+                    val_prop.span,
+                    format!("cannot combine 'value=' with '(array)' on json field '{field_name}'"),
+                    "remove '(array)' when using 'value=<literal>'",
+                ));
+            }
+            if has_skip || has_omitempty || matches!(field_node.ty(), Some("@skip" | "@omitempty"))
+            {
+                diags.push(make_error(
+                    &unit.path,
+                    DiagnosticCode::E001,
+                    val_prop.span,
+                    format!(
+                        "cannot combine 'value=' with '@omitempty' or '@skip' on json field '{field_name}'"
+                    ),
+                    "remove '@omitempty' or '@skip' when using 'value=<literal>'",
+                ));
+            }
+            if field_node.has_prop("from")
+                || field_node.has_prop("path")
+                || !positional_alias.is_empty()
+            {
+                diags.push(make_error(
+                    &unit.path,
+                    DiagnosticCode::E001,
+                    val_prop.span,
+                    format!(
+                        "cannot combine 'value=' with 'from=' or wire key alias on json field '{field_name}'"
+                    ),
+                    "constant 'value=' fields do not read from wire JSON",
+                ));
+            }
+
+            if !has_children && !is_empty_block && !is_dict_field {
+                if let Some(&raw_type) = value_args.first() {
+                    let base_type_str =
+                        raw_type.trim_start_matches("(array)").trim_end_matches('?');
+                    if !matches!(base_type_str, "str" | "int" | "float" | "bool") {
+                        diags.push(make_error(
+                            &unit.path,
+                            DiagnosticCode::E100,
+                            val_prop.span,
+                            format!(
+                                "'value=' is only supported on scalar str, int, float, or bool json fields, got '{base_type_str}'"
+                            ),
+                            "use str, int, float, or bool with 'value=<literal>'",
+                        ));
+                    } else if let Some(actual_lit_type) = lit_type_str {
+                        if actual_lit_type != base_type_str {
+                            diags.push(make_error(
+                                &unit.path,
+                                DiagnosticCode::E100,
+                                val_prop.span,
+                                format!(
+                                    "json field '{field_name}' has type '{base_type_str}' but 'value=' literal has type '{actual_lit_type}'"
+                                ),
+                                "ensure the 'value=' literal matches the declared field type",
+                            ));
+                        }
+                    }
+                }
+            }
         }
 
         let mut from_val: Option<String> = None;
@@ -973,24 +1134,26 @@ fn lint_json_children<'a>(
             clean_field_name.to_owned()
         };
 
-        if !seen_source_keys.insert(source_key.clone()) && !is_dup_field {
-            diags.push(make_error(
-                &unit.path,
-                DiagnosticCode::E041,
-                field_node.span(),
-                format!("duplicate json source key '{source_key}'"),
-                format!("rename or remove one of the fields mapping to '{source_key}'"),
-            ));
-        }
+        if field_node.prop("value").is_none() {
+            if !seen_source_keys.insert(source_key.clone()) && !is_dup_field {
+                diags.push(make_error(
+                    &unit.path,
+                    DiagnosticCode::E041,
+                    field_node.span(),
+                    format!("duplicate json source key '{source_key}'"),
+                    format!("rename or remove one of the fields mapping to '{source_key}'"),
+                ));
+            }
 
-        if source_key != clean_field_name && field_names.contains(&source_key) {
-            diags.push(make_error(
-                &unit.path,
-                DiagnosticCode::E041,
-                field_node.span(),
-                format!("json alias '{source_key}' conflicts with field name"),
-                "",
-            ));
+            if source_key != clean_field_name && field_names.contains(&source_key) {
+                diags.push(make_error(
+                    &unit.path,
+                    DiagnosticCode::E041,
+                    field_node.span(),
+                    format!("json alias '{source_key}' conflicts with field name"),
+                    "",
+                ));
+            }
         }
     }
 }

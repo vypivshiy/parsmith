@@ -1365,3 +1365,156 @@ fn extract_heading {
 
     insta::assert_yaml_snapshot!("catalog_module_info", info);
 }
+
+#[test]
+fn pass5_postfix_field_types_autocast_and_value_lowering() {
+    let src = r#"
+define SOURCE="habr"
+extension Feed {
+    now_ts {
+        sig int int
+        py { emit "{{out}} = {{in}}" }
+        js { emit "const {{out}} = {{in}};" }
+        go { emit "{{out}} := {{in}}" }
+        rust { emit "let {{out}} = {{in}};" }
+    }
+    gen_id {
+        sig str str
+        py { emit "{{out}} = {{in}}" }
+        js { emit "const {{out}} = {{in}};" }
+        go { emit "{{out}} := {{in}}" }
+        rust { emit "let {{out}} = {{in}};" }
+    }
+}
+
+(list)struct HabrFeed {
+    @split-doc { css-all "article.item" }
+    @init {
+        fetched_at int value=0 { !Feed.now_ts }
+    }
+    source str value="{{SOURCE}}"
+    kind value="article"
+    version int value=1
+    is_live bool value=#false
+    id str value="{{SOURCE}}" { !Feed.gen_id }
+    title str { css "a.title"; text; trim }
+    subtitle str? { css ".lead"; text; trim; fallback #null }
+    tags (array)str { css-all ".tag"; text; trim }
+    has_hubs bool { css ".hubs" }
+    views int { css ".views"; text; fallback 0 }
+    scores (array)float { css-all ".score"; text }
+}
+
+json ReleaseCard {
+    source str value="{{SOURCE}}"
+    version int value=1
+    is_live bool value=#false
+    id str from="node_id"
+}
+"#;
+    let module = compile_source(src, Some("habr.kdl")).expect("compile HabrFeed & ReleaseCard");
+
+    // 1. Check @init field with seed value + extension step
+    let habr = module.struct_decl("HabrFeed").unwrap();
+    assert_eq!(habr.init_fields.len(), 1);
+    let fetched_at = &habr.init_fields[0];
+    assert_eq!(fetched_at.type_info, TypeInfo::int());
+    assert_eq!(fetched_at.pipeline.steps.len(), 2);
+    assert_eq!(
+        fetched_at.pipeline.steps[0].op,
+        StepOp::Value {
+            value: LiteralValue::Int(0)
+        }
+    );
+    assert!(matches!(
+        fetched_at.pipeline.steps[1].op,
+        StepOp::ExtensionCall { ref qualified_name, .. } if qualified_name == "Feed.now_ts"
+    ));
+
+    // 2. Check standalone constant fields in struct
+    let source_f = habr.fields.iter().find(|f| f.name == "source").unwrap();
+    assert_eq!(source_f.type_info, TypeInfo::string());
+    assert_eq!(
+        source_f.pipeline.steps[0].op,
+        StepOp::Value {
+            value: LiteralValue::String("habr".to_string())
+        }
+    );
+
+    let id_f = habr.fields.iter().find(|f| f.name == "id").unwrap();
+    assert_eq!(id_f.type_info, TypeInfo::string());
+    assert_eq!(id_f.pipeline.steps.len(), 2);
+    assert_eq!(
+        id_f.pipeline.steps[0].op,
+        StepOp::Value {
+            value: LiteralValue::String("habr".to_string())
+        }
+    );
+
+    // 3. Check auto-cast steps (has_hubs -> ToBool, views -> ToInt before fallback 0, scores -> ToFloat on array)
+    let has_hubs = habr.fields.iter().find(|f| f.name == "has_hubs").unwrap();
+    assert_eq!(has_hubs.type_info, TypeInfo::bool());
+    assert_eq!(has_hubs.pipeline.steps.len(), 2);
+    assert_eq!(has_hubs.pipeline.steps[1].op, StepOp::ToBool);
+
+    let views = habr.fields.iter().find(|f| f.name == "views").unwrap();
+    assert_eq!(views.type_info, TypeInfo::int());
+    assert_eq!(views.pipeline.steps.len(), 3);
+    assert_eq!(views.pipeline.steps[2].op, StepOp::ToInt);
+    assert_eq!(views.pipeline.fallback, Some(LiteralValue::Int(0)));
+
+    let scores = habr.fields.iter().find(|f| f.name == "scores").unwrap();
+    assert_eq!(scores.type_info, TypeInfo::float().with_array(true));
+    assert_eq!(scores.pipeline.steps.len(), 3);
+    assert_eq!(scores.pipeline.steps[2].op, StepOp::ToFloat);
+
+    // 4. Check JsonFieldDef.value on ReleaseCard
+    let rel = module.json_def("ReleaseCard").unwrap();
+    assert_eq!(
+        rel.fields[0].value,
+        Some(LiteralValue::String("habr".to_string()))
+    );
+    assert_eq!(rel.fields[1].value, Some(LiteralValue::Int(1)));
+    assert_eq!(rel.fields[2].value, Some(LiteralValue::Bool(false)));
+    assert_eq!(rel.fields[3].value, None);
+
+    // 5. E100 when DOCUMENT is not extracted for str / int / float or when nullability/array mismatches
+    let mismatch_cases = [
+        (
+            "struct S { title str { css \"h1\" } }",
+            "add 'text', 'raw', or 'attr'",
+        ),
+        (
+            "struct S { views int { css \".v\" } }",
+            "add 'text', 'raw', or 'attr'",
+        ),
+        (
+            "struct S { title str { css \"a\"; text; fallback #null } }",
+            "use a nullable field type",
+        ),
+        (
+            "struct S { title str? { css \"a\"; text } }",
+            "add 'fallback #null'",
+        ),
+        (
+            "struct S { tags (array)str { css \"a\"; text } }",
+            "use '(array)' selector/operation",
+        ),
+        (
+            "struct S { tag str { css-all \"a\"; text } }",
+            "pipeline produces a list",
+        ),
+    ];
+    for (bad_src, expected_hint) in mismatch_cases {
+        let res = check_source(bad_src, Some("mismatch.kdl"));
+        let e100 = res
+            .errors()
+            .find(|d| d.code == DiagnosticCode::E100)
+            .unwrap_or_else(|| panic!("expected E100 for: {bad_src}"));
+        assert!(
+            e100.hint.as_deref().unwrap_or("").contains(expected_hint),
+            "expected hint containing '{expected_hint}' for {bad_src}, got: {:?}",
+            e100.hint
+        );
+    }
+}

@@ -3,7 +3,8 @@
 
 use std::collections::HashSet;
 
-use crate::kdl::{NodeId, NodeRef};
+use crate::ast::{BaseType, TypeInfo};
+use crate::kdl::{KdlValue, NodeId, NodeRef};
 use indexmap::IndexMap;
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode};
@@ -458,40 +459,28 @@ fn lint_reserved_directive(
                 ..pctx
             };
             for init_field in children {
-                if !seen_init.insert(init_field.name().to_owned()) {
+                let init_name = init_field.name();
+                if !seen_init.insert(init_name.to_owned()) {
                     diags.push(make_error(
                         &unit.path,
                         DiagnosticCode::E402,
                         init_field.span(),
-                        format!(
-                            "duplicate @init field '{}' in struct '{struct_name}'",
-                            init_field.name()
-                        ),
-                        "",
-                    ));
-                }
-                if !init_field.args().is_empty() || !init_field.props().is_empty() {
-                    diags.push(make_error(
-                        &unit.path,
-                        DiagnosticCode::E001,
-                        init_field.span(),
-                        format!(
-                            "@init field '{}' does not accept arguments or properties",
-                            init_field.name()
-                        ),
+                        format!("duplicate @init field '{init_name}' in struct '{struct_name}'"),
                         "",
                     ));
                 }
                 let ops = expand_defines(init_field.children(), program, env);
-                if ops.is_empty() {
-                    diags.push(make_error(
-                        &unit.path,
-                        DiagnosticCode::E001,
-                        init_field.span(),
-                        format!("@init field '{}' has no operations", init_field.name()),
-                        "",
-                    ));
-                } else {
+                lint_field_header_and_value(
+                    unit,
+                    env,
+                    init_field,
+                    init_name,
+                    true,
+                    false,
+                    !ops.is_empty(),
+                    diags,
+                );
+                if !ops.is_empty() {
                     lint_pipeline_ops(&init_pctx, &ops, diags);
                 }
             }
@@ -581,6 +570,236 @@ fn lint_reserved_directive(
     }
 }
 
+/// Parses an optional postfix field type argument (`str`, `int`, `float`, `bool`, with optional `?` and `(array)`)
+/// on a `struct` or `@init` field node.
+pub fn parse_postfix_field_type(
+    arg: &crate::kdl::KdlArg,
+    field_name: &str,
+) -> Result<TypeInfo, (DiagnosticCode, crate::kdl::Span, String, String)> {
+    let Some(s) = arg.value.as_str() else {
+        return Err((
+            DiagnosticCode::E001,
+            arg.span,
+            format!(
+                "field '{field_name}' type argument must be a type name (str, int, float, bool)"
+            ),
+            format!("example: {field_name} str {{ css \"...\"; text }}"),
+        ));
+    };
+
+    let (without_arr, is_array) = if let Some(ann) = arg.ty() {
+        if ann != "array" {
+            return Err((
+                DiagnosticCode::E001,
+                arg.type_span.unwrap_or(arg.span),
+                format!("unsupported type annotation '({ann})' on field '{field_name}'"),
+                "only '(array)' is supported on field types".to_owned(),
+            ));
+        }
+        (s, true)
+    } else if let Some(stripped) = s.strip_prefix("(array)") {
+        (stripped, true)
+    } else {
+        (s, false)
+    };
+
+    let (base_str, is_optional) = match without_arr.strip_suffix('?') {
+        Some(b) => (b, true),
+        None => (without_arr, false),
+    };
+
+    let base_ti = match base_str {
+        "str" => TypeInfo::string(),
+        "int" => TypeInfo::int(),
+        "float" => TypeInfo::float(),
+        "bool" => TypeInfo::bool(),
+        _ => {
+            return Err((
+                DiagnosticCode::E001,
+                arg.span,
+                format!(
+                    "unknown field type '{s}' on field '{field_name}' (valid types: str, int, float, bool)"
+                ),
+                format!(
+                    "use a valid field type (str, int, float, bool) or move operations inside braces: {field_name} {{ css \"...\"; text }}"
+                ),
+            ));
+        }
+    };
+
+    Ok(base_ti.with_array(is_array).with_optional(is_optional))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lint_field_header_and_value(
+    unit: &SourceUnit,
+    env: &UnitEnv,
+    field_node: NodeRef<'_>,
+    field_name: &str,
+    is_init: bool,
+    is_table_field: bool,
+    has_ops: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let field_label = if is_init {
+        format!("@init field '{field_name}'")
+    } else {
+        format!("field '{field_name}'")
+    };
+
+    // 1. Reject prefix type annotations on fields (`(str)title`)
+    if let Some(ann) = field_node.ty() {
+        diags.push(make_error(
+            &unit.path,
+            DiagnosticCode::E001,
+            field_node.type_span().unwrap_or_else(|| field_node.span()),
+            format!(
+                "prefix type annotation '({ann})' is not allowed on {field_label}; place the type after the field name"
+            ),
+            format!("use postfix type syntax: {field_name} {ann}"),
+        ));
+    }
+
+    // 2. Validate optional postfix type argument (at most 1 positional argument)
+    let mut declared_type: Option<TypeInfo> = None;
+    if field_node.args().len() > 1 {
+        diags.push(make_error(
+            &unit.path,
+            DiagnosticCode::E001,
+            field_node.span(),
+            format!("{field_label} accepts at most 1 type argument"),
+            format!("move operations inside braces: {field_name} {{ css \"...\"; text }}"),
+        ));
+    } else if let Some(arg) = field_node.arg(0) {
+        match parse_postfix_field_type(arg, field_name) {
+            Ok(ti) => declared_type = Some(ti),
+            Err((code, span, msg, hint)) => {
+                diags.push(make_error(&unit.path, code, span, msg, hint));
+            }
+        }
+    }
+
+    // 3. Validate properties (only `value=<literal>` is allowed)
+    for prop in field_node.props() {
+        if prop.key != "value" {
+            diags.push(make_error(
+                &unit.path,
+                DiagnosticCode::E001,
+                prop.span,
+                format!("unknown property '{}' on {field_label}", prop.key),
+                "only 'value=<literal>' is supported on fields",
+            ));
+        }
+    }
+
+    if let Some(val_prop) = field_node.prop("value") {
+        if is_table_field {
+            diags.push(make_error(
+                &unit.path,
+                DiagnosticCode::E203,
+                val_prop.span,
+                format!(
+                    "table field '{field_name}' must start with 'match {{ ... }}' (cannot use 'value=')"
+                ),
+                format!("example: {field_name} {{ match {{ eq \"Header\" }} }}"),
+            ));
+        }
+
+        let lit_base = match &val_prop.value {
+            KdlValue::String(s) => {
+                for token in crate::linter::top_level::extract_double_brace_tokens(s) {
+                    if crate::linter::is_define_name(token) {
+                        if !env.defines.contains_key(token)
+                            && !env.all_program_defines.contains(token)
+                        {
+                            diags.push(make_error(
+                                &unit.path,
+                                DiagnosticCode::E300,
+                                val_prop.value_span,
+                                format!("undefined define '{token}' in value=\"{s}\""),
+                                format!("declare 'define {token}=\"...\"' before use"),
+                            ));
+                        } else if matches!(env.defines.get(token), Some(DefineEntry::Block { .. }))
+                        {
+                            diags.push(make_error(
+                                &unit.path,
+                                DiagnosticCode::E002,
+                                val_prop.value_span,
+                                format!(
+                                    "cannot interpolate block define '{token}' in value=\"{s}\""
+                                ),
+                                format!("use a scalar define: define {token}=\"...\""),
+                            ));
+                        }
+                    }
+                }
+                Some(BaseType::String)
+            }
+            KdlValue::Int(_) => Some(BaseType::Int),
+            KdlValue::Float(_) => Some(BaseType::Float),
+            KdlValue::Bool(_) => Some(BaseType::Bool),
+            KdlValue::Null => {
+                diags.push(make_error(
+                    &unit.path,
+                    DiagnosticCode::E002,
+                    val_prop.value_span,
+                    "'value' property cannot be #null; use a scalar str, int, float, or bool literal",
+                    "example: value=\"default\" or value=0 or value=#false",
+                ));
+                None
+            }
+        };
+
+        if field_node.has_children_block() && !has_ops {
+            diags.push(make_error(
+                &unit.path,
+                DiagnosticCode::E001,
+                field_node.span(),
+                format!("empty pipeline block '{{}}' alongside 'value=' on {field_label}"),
+                "remove the empty '{}' block or add pipeline operations inside it",
+            ));
+        }
+
+        if !has_ops {
+            if let (Some(target_ti), Some(actual_base)) = (&declared_type, &lit_base) {
+                if target_ti.is_array || target_ti.is_optional || &target_ti.base != actual_base {
+                    let mut target_repr = if target_ti.is_array {
+                        format!("LIST_{}", target_ti.base.dsl_name())
+                    } else {
+                        target_ti.base.dsl_name().to_owned()
+                    };
+                    if target_ti.is_optional {
+                        target_repr.push('?');
+                    }
+                    diags.push(make_error(
+                        &unit.path,
+                        DiagnosticCode::E100,
+                        val_prop.span,
+                        format!(
+                            "{field_label} declared as {target_repr} but 'value=' literal has type {}",
+                            actual_base.dsl_name()
+                        ),
+                        "ensure the field type matches the 'value=' literal type, or add a conversion pipeline '{ ... }'",
+                    ));
+                }
+            }
+        }
+    } else if !has_ops {
+        let hint = if !is_init && starts_with_http_signature(field_name) {
+            REQUEST_LINE_CONTINUATION_HINT.to_owned()
+        } else {
+            format!("add at least one operation: {field_name} {{ css \".item\"; text }}")
+        };
+        diags.push(make_error(
+            &unit.path,
+            DiagnosticCode::E001,
+            field_node.span(),
+            format!("{field_label} has no operations"),
+            hint,
+        ));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn lint_regular_field(
     unit: &SourceUnit,
@@ -593,35 +812,27 @@ fn lint_regular_field(
     init_fields: &HashSet<String>,
     diags: &mut Vec<Diagnostic>,
 ) {
-    if !field_node.args().is_empty() || !field_node.props().is_empty() {
-        diags.push(make_error(
-            &unit.path,
-            DiagnosticCode::E001,
-            field_node.span(),
-            format!("field '{field_name}' does not accept arguments or properties on the field node itself"),
-            format!("move operations inside braces: {field_name} {{ css \"...\"; text }}"),
-        ));
-    }
-
     let expanded = expand_defines(field_node.children(), program, env);
+    lint_field_header_and_value(
+        unit,
+        env,
+        field_node,
+        field_name,
+        false,
+        struct_type == "table",
+        !expanded.is_empty(),
+        diags,
+    );
     if expanded.is_empty() {
-        let hint = if starts_with_http_signature(field_name) {
-            REQUEST_LINE_CONTINUATION_HINT.to_owned()
-        } else {
-            format!("add at least one operation: {field_name} {{ css \".item\"; text }}")
-        };
-        diags.push(make_error(
-            &unit.path,
-            DiagnosticCode::E001,
-            field_node.span(),
-            format!("field '{field_name}' has no operations"),
-            hint,
-        ));
         return;
     }
 
     let is_single_nested = expanded.len() == 1 && expanded[0].name() == "nested";
-    if struct_type == "table" && !is_single_nested && expanded[0].name() != "match" {
+    if struct_type == "table"
+        && field_node.prop("value").is_none()
+        && !is_single_nested
+        && expanded[0].name() != "match"
+    {
         diags.push(make_error(
             &unit.path,
             DiagnosticCode::E203,

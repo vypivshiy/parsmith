@@ -447,6 +447,7 @@ impl GoEmitter {
         let is_arr_out = step.output.is_array;
 
         match &step.op {
+            StepOp::Value { .. } => {}
             StepOp::LoadInit { name } => {
                 let rcv = receiver(&self.current_struct_name);
                 let camel = to_camel_case(name);

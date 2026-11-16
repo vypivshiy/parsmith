@@ -10,9 +10,10 @@ use indexmap::IndexMap;
 use crate::ast::{
     BaseType, CheckDecl, Cond, CondOp, CondValue, ExtensionDecl, ExtensionHelper, ExtensionImport,
     ExtensionOp, ExtensionTargetBlock, ExtensionTypeSig, FieldDecl, FnParam, FunctionDef,
-    InitFieldDecl, JsonDef, JsonFieldDef, JsonKind, MatcherEntry, MatcherListDef, Module, Pipeline,
-    RawMode, RequestDecl, RestArtifact, RestEndpointDecl, ResultAliasDef, ResultVariantDef, StepOp,
-    StructDecl, StructKind, StructTypeDef, TypeDefField, TypeInfo, TypedStep,
+    InitFieldDecl, JsonDef, JsonFieldDef, JsonKind, LiteralValue, MatcherEntry, MatcherListDef,
+    Module, Pipeline, RawMode, RequestDecl, RestArtifact, RestEndpointDecl, ResultAliasDef,
+    ResultVariantDef, StepOp, StructDecl, StructKind, StructTypeDef, TypeDefField, TypeInfo,
+    TypedStep,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticCode};
 use crate::gjson::GjsonPath;
@@ -455,7 +456,7 @@ impl<'a> LoweringCtx<'a> {
             }
 
             // 1. Block `define` expansion inside `json`
-            if node.args().is_empty() && !node.has_children_block() {
+            if node.args().is_empty() && node.props().is_empty() && !node.has_children_block() {
                 if let Some(&DefineEntry::Block {
                     ref unit_path,
                     node_id,
@@ -547,6 +548,7 @@ impl<'a> LoweringCtx<'a> {
                     is_dict: true,
                     key_type: Some(key_info),
                     value_type: Some(val_info),
+                    value: None,
                     span: node.span(),
                 });
                 continue;
@@ -645,6 +647,7 @@ impl<'a> LoweringCtx<'a> {
                     is_dict: false,
                     key_type: None,
                     value_type: None,
+                    value: None,
                     span: node.span(),
                 });
                 continue;
@@ -707,6 +710,13 @@ impl<'a> LoweringCtx<'a> {
             let alias = extract_json_field_alias(node, env, positional_alias.as_deref());
             let gjson_path = parse_field_gjson_path(&name, alias.as_deref());
             let doc = extract_json_field_doc(node, env);
+            let value = node.prop("value").and_then(|p| match &p.value {
+                KdlValue::String(s) => Some(LiteralValue::String(env.resolve_str_arg(s))),
+                KdlValue::Int(n) => Some(LiteralValue::Int(*n as i64)),
+                KdlValue::Float(f) => Some(LiteralValue::Float(*f)),
+                KdlValue::Bool(b) => Some(LiteralValue::Bool(*b)),
+                KdlValue::Null => None,
+            });
 
             fields.push(JsonFieldDef {
                 name,
@@ -720,6 +730,7 @@ impl<'a> LoweringCtx<'a> {
                 is_dict: false,
                 key_type: None,
                 value_type: None,
+                value,
                 span: node.span(),
             });
         }
@@ -804,10 +815,10 @@ impl<'a> LoweringCtx<'a> {
                     let empty_inits = IndexMap::new();
                     for init_child in child.children() {
                         let init_name = init_child.name().to_owned();
-                        let pipeline = self.lower_pipeline(
+                        let pipeline = self.lower_field_pipeline(
                             unit,
                             &env,
-                            init_child.children(),
+                            init_child,
                             start_type.clone(),
                             &empty_inits,
                             false,
@@ -1011,13 +1022,13 @@ impl<'a> LoweringCtx<'a> {
                         errors.push(err_spec.clone());
                     }
                 } else if !child_name.starts_with('@') {
-                    let pipeline = self.lower_pipeline(
+                    let pipeline = self.lower_field_pipeline(
                         unit,
                         &env,
-                        child.children(),
+                        child,
                         start_type.clone(),
                         &init_types,
-                        false,
+                        kind == StructKind::Table,
                     );
                     let ti = pipeline.output.clone();
                     fields.push(FieldDecl {
@@ -1134,6 +1145,51 @@ impl<'a> LoweringCtx<'a> {
         }
     }
 
+    fn lower_field_pipeline(
+        &mut self,
+        unit: &'a SourceUnit,
+        env: &UnitEnv,
+        field_node: NodeRef<'a>,
+        start_type: TypeInfo,
+        init_types: &IndexMap<String, TypeInfo>,
+        is_table_field: bool,
+    ) -> Pipeline {
+        let field_name = field_node.name();
+        let declared_type = if field_node.ty().is_none() && field_node.args().len() == 1 {
+            crate::linter::structs::parse_postfix_field_type(&field_node.args()[0], field_name).ok()
+        } else {
+            None
+        };
+
+        let seed_value = if !is_table_field {
+            field_node.prop("value").and_then(|prop| {
+                let (lit, ti) = match &prop.value {
+                    KdlValue::String(s) => (
+                        LiteralValue::String(env.resolve_str_arg(s)),
+                        TypeInfo::string(),
+                    ),
+                    KdlValue::Int(n) => (LiteralValue::Int(*n as i64), TypeInfo::int()),
+                    KdlValue::Float(f) => (LiteralValue::Float(*f), TypeInfo::float()),
+                    KdlValue::Bool(b) => (LiteralValue::Bool(*b), TypeInfo::bool()),
+                    KdlValue::Null => return None,
+                };
+                Some((lit, ti, prop.span))
+            })
+        } else {
+            None
+        };
+
+        self.lower_pipeline_inner(
+            unit,
+            env,
+            field_node.children(),
+            start_type,
+            init_types,
+            false,
+            Some((field_name, field_node.span(), declared_type, seed_value)),
+        )
+    }
+
     fn lower_pipeline(
         &mut self,
         unit: &'a SourceUnit,
@@ -1143,11 +1199,55 @@ impl<'a> LoweringCtx<'a> {
         init_types: &IndexMap<String, TypeInfo>,
         is_pre_validate: bool,
     ) -> Pipeline {
+        self.lower_pipeline_inner(
+            unit,
+            env,
+            raw_nodes,
+            start_type,
+            init_types,
+            is_pre_validate,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    fn lower_pipeline_inner(
+        &mut self,
+        unit: &'a SourceUnit,
+        env: &UnitEnv,
+        raw_nodes: Vec<NodeRef<'a>>,
+        start_type: TypeInfo,
+        init_types: &IndexMap<String, TypeInfo>,
+        is_pre_validate: bool,
+        field_meta: Option<(
+            &str,
+            Span,
+            Option<TypeInfo>,
+            Option<(LiteralValue, TypeInfo, Span)>,
+        )>,
+    ) -> Pipeline {
         let expanded = crate::linter::structs::expand_defines(raw_nodes, self.program, env);
+        let has_pipeline_ops = !expanded.is_empty();
+
+        let (field_name, field_span, declared_type, seed_value) = match field_meta {
+            Some((n, s, dt, sv)) => (n, s, dt, sv),
+            None => ("", Span::EMPTY, None, None),
+        };
 
         let mut current = start_type.clone();
         let mut steps: Vec<TypedStep> = Vec::new();
         let mut fallback = None;
+        let mut pending_fallback: Option<NodeRef<'a>> = None;
+
+        if let Some((lit, lit_ti, lit_span)) = seed_value {
+            steps.push(TypedStep {
+                op: StepOp::Value { value: lit },
+                input: start_type.clone(),
+                output: lit_ti.clone(),
+                span: lit_span,
+            });
+            current = lit_ti;
+        }
 
         for node in expanded {
             let op_name = node.name();
@@ -1212,18 +1312,9 @@ impl<'a> LoweringCtx<'a> {
                 continue;
             }
 
-            // 3. `fallback` terminal literal
+            // 3. `fallback` terminal literal (held until after optional field auto-cast)
             if op_name == "fallback" {
-                let (fb_lit, updated_ti) = check_and_lower_fallback(
-                    &unit.path,
-                    node,
-                    env,
-                    !steps.is_empty(),
-                    &current,
-                    self.diags,
-                );
-                fallback = fb_lit;
-                current = updated_ti;
+                pending_fallback = Some(node);
                 continue;
             }
 
@@ -1490,6 +1581,108 @@ impl<'a> LoweringCtx<'a> {
             }
 
             current = step_out;
+        }
+
+        // Auto-cast before terminal `fallback` when a postfix field `<type>` is declared
+        if let Some(ref target_ti) = declared_type {
+            if has_pipeline_ops && !steps.is_empty() {
+                if target_ti.base == BaseType::Bool
+                    && !target_ti.is_array
+                    && current.base != BaseType::Bool
+                    && current.base != BaseType::Auto
+                {
+                    let out_ti = TypeInfo::bool();
+                    steps.push(TypedStep {
+                        op: StepOp::ToBool,
+                        input: current.clone(),
+                        output: out_ti.clone(),
+                        span: field_span,
+                    });
+                    current = out_ti;
+                } else if target_ti.base == BaseType::Int
+                    && current.base == BaseType::String
+                    && current.is_array == target_ti.is_array
+                {
+                    let out_ti = TypeInfo::int().with_array(current.is_array);
+                    steps.push(TypedStep {
+                        op: StepOp::ToInt,
+                        input: current.clone(),
+                        output: out_ti.clone(),
+                        span: field_span,
+                    });
+                    current = out_ti;
+                } else if target_ti.base == BaseType::Float
+                    && current.base == BaseType::String
+                    && current.is_array == target_ti.is_array
+                {
+                    let out_ti = TypeInfo::float().with_array(current.is_array);
+                    steps.push(TypedStep {
+                        op: StepOp::ToFloat,
+                        input: current.clone(),
+                        output: out_ti.clone(),
+                        span: field_span,
+                    });
+                    current = out_ti;
+                }
+            }
+        }
+
+        if let Some(fb_node) = pending_fallback {
+            let (fb_lit, updated_ti) = check_and_lower_fallback(
+                &unit.path,
+                fb_node,
+                env,
+                !steps.is_empty(),
+                &current,
+                self.diags,
+            );
+            fallback = fb_lit;
+            current = updated_ti;
+        }
+
+        if let Some(ref target_ti) = declared_type {
+            if has_pipeline_ops {
+                if current.base == BaseType::Auto {
+                    current = target_ti.clone();
+                } else if current.base != target_ti.base
+                    || current.is_array != target_ti.is_array
+                    || current.is_optional != target_ti.is_optional
+                {
+                    let hint = if current.base == BaseType::Document
+                        && matches!(
+                            target_ti.base,
+                            BaseType::String | BaseType::Int | BaseType::Float
+                        ) {
+                        "add 'text', 'raw', or 'attr' to extract a string from DOCUMENT"
+                    } else if current.is_optional != target_ti.is_optional {
+                        if current.is_optional {
+                            "use a nullable field type (e.g. 'str?') when using 'fallback #null'"
+                        } else {
+                            "add 'fallback #null' to produce an optional type, or remove '?' from the field type"
+                        }
+                    } else if current.is_array != target_ti.is_array {
+                        if target_ti.is_array {
+                            "use '(array)' selector/operation (e.g. 'css-all', 'split') or remove '(array)' from field type"
+                        } else {
+                            "pipeline produces a list; declare field type with '(array)' or reduce to scalar with 'first'/'join'"
+                        }
+                    } else {
+                        ""
+                    };
+
+                    self.diags.push(make_error(
+                        &unit.path,
+                        DiagnosticCode::E100,
+                        field_span,
+                        format!(
+                            "field '{field_name}' declared as {}, but pipeline produces {}",
+                            format_type_info_dsl(target_ti),
+                            format_type_info_dsl(&current),
+                        ),
+                        hint,
+                    ));
+                }
+            }
         }
 
         Pipeline {
@@ -1944,6 +2137,18 @@ fn parse_extension_target_block(target_node: NodeRef<'_>) -> ExtensionTargetBloc
         imports,
         helpers,
     }
+}
+
+fn format_type_info_dsl(ti: &TypeInfo) -> String {
+    let mut s = if ti.is_array {
+        format!("LIST_{}", ti.base.dsl_name())
+    } else {
+        ti.base.dsl_name().to_owned()
+    };
+    if ti.is_optional {
+        s.push('?');
+    }
+    s
 }
 
 fn extract_json_field_alias(

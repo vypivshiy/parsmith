@@ -564,6 +564,7 @@ impl ElixirEmitter {
         let prefix = format_elixir_module_prefix(&self.options.package);
 
         match &step.op {
+            StepOp::Value { .. } => {}
             StepOp::LoadInit { name } => {
                 let f_name = elixir_field_name(name);
                 wln!(writer, "{nxt} = self.{f_name}");
