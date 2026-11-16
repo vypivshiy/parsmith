@@ -1016,6 +1016,7 @@ define SOURCE="github"
 
 json ReleaseCard {
     source str value="{{SOURCE}}"
+    channel str value="{{SOURCE}}"
     kind str value="event"
     version int value=1
     weight float value=2.5
@@ -1031,6 +1032,7 @@ json ReleaseCard {
     assert!(!res_td.has_errors(), "{:?}", res_td.diagnostics);
     let code_td = res_td.primary_code().unwrap();
     assert!(code_td.contains("'source': 'github',"));
+    assert!(code_td.contains("'channel': 'github',"));
     assert!(code_td.contains("'kind': 'event',"));
     assert!(code_td.contains("'version': 1,"));
     assert!(code_td.contains("'weight': 2.5,"));
@@ -1046,6 +1048,7 @@ json ReleaseCard {
     assert!(!res_dc.has_errors(), "{:?}", res_dc.diagnostics);
     let code_dc = res_dc.primary_code().unwrap();
     assert!(code_dc.contains("source='github',"));
+    assert!(code_dc.contains("channel='github',"));
     assert!(code_dc.contains("kind='event',"));
     assert!(code_dc.contains("version=1,"));
     assert!(code_dc.contains("weight=2.5,"));

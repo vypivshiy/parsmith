@@ -686,10 +686,17 @@ def test_bs4_attr_contract_keyerror_fallback_and_multivalued_attrs() -> None:
 fn python_struct_value_constants_and_postfix_autocast() {
     let schema = r#"
 define SOURCE="habr"
+extension Feed {
+    now_ts {
+        sig int int
+        py { emit "{{out}} = {{in}} + 100" }
+    }
+}
 
 struct FeedCard {
     @init {
         seed_prefix str value="{{SOURCE}}" { upper }
+        fetched_at int value=0 { !Feed.now_ts }
     }
     source str value="{{SOURCE}}"
     kind value="article"
@@ -698,9 +705,14 @@ struct FeedCard {
     is_live bool value=#false
     prefixed_id str value="{{SOURCE}}" { fmt "{{}}-01" }
     init_ref str { @seed_prefix }
+    subtitle str? { css ".lead"; text; trim; fallback #null }
+    tags (array)str { css-all ".tag"; text; trim }
+    counts (array)int { css-all ".cnt"; text }
+    scores (array)float { css-all ".score"; text }
     has_badge bool { css ".badge" }
     views int { css ".views"; text; fallback 0 }
     rating float { css ".rating"; text; fallback 0.0 }
+    url { css "a.link"; attr "href" }
 }
 "#;
     let res = generate_source(
@@ -715,8 +727,11 @@ struct FeedCard {
     assert!(code.contains("v1 = 1"));
     assert!(code.contains("v1 = 1.5"));
     assert!(code.contains("v1 = False"));
+    assert!(code.contains("v2 = v1 + 100"));
     assert!(code.contains("v2 = '{}-01'.format(v1)"));
     assert!(code.contains("v2 = v1 is not None"));
+    assert!(code.contains("v3 = [int(i) for i in v2]"));
+    assert!(code.contains("v3 = [float(i) for i in v2]"));
     assert!(code.contains("v3 = int(v2)"));
     assert!(code.contains("v3 = float(v2)"));
 }

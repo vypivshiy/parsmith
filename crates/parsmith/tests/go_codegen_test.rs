@@ -957,10 +957,17 @@ golang.org/x/net v0.52.0/go.mod h1:R1MAz7uMZxVMualyPXb+VaqGSa3LIaUqk0eEt3w36Sw=
 fn go_struct_and_json_value_constants_and_postfix_autocast() {
     let schema = r#"
 define SOURCE="habr"
+extension Feed {
+    now_ts {
+        sig int int
+        go { emit "{{out}} := {{in}} + int64(100)" }
+    }
+}
 
 struct FeedCard {
     @init {
         seed_prefix str value="{{SOURCE}}" { upper }
+        fetched_at int value=0 { !Feed.now_ts }
     }
     source str value="{{SOURCE}}"
     kind value="article"
@@ -968,13 +975,19 @@ struct FeedCard {
     ratio float value=1.5
     is_live bool value=#false
     prefixed_id str value="{{SOURCE}}" { fmt "{{}}-01" }
+    subtitle str? { css ".lead"; text; trim; fallback #null }
+    tags (array)str { css-all ".tag"; text; trim }
+    counts (array)int { css-all ".cnt"; text }
+    scores (array)float { css-all ".score"; text }
     has_badge bool { css ".badge" }
     views int { css ".views"; text; fallback 0 }
     rating float { css ".rating"; text; fallback 0.0 }
+    url { css "a.link"; attr "href" }
 }
 
 json ReleaseCard {
     source str value="{{SOURCE}}"
+    channel str value="{{SOURCE}}"
     kind str value="event"
     version int value=1
     weight float value=2.5
@@ -995,11 +1008,15 @@ json ReleaseCard {
     assert!(code.contains("v1 := int64(1)"));
     assert!(code.contains("v1 := 1.5"));
     assert!(code.contains("v1 := false"));
+    assert!(code.contains("v2 := v1 + int64(100)"));
     assert!(code.contains("v2 := rtFmt(\"{{}}-01\", v1)"));
     assert!(code.contains("v2 := v1.Length() > 0"));
+    assert!(code.contains("v3 := rtToIntArr(v2)"));
+    assert!(code.contains("v3 := rtToFloatArr(v2)"));
     assert!(code.contains("v3 := rtToInt(v2)"));
     assert!(code.contains("v3 := rtToFloat(v2)"));
     assert!(code.contains("res.Source = \"habr\""));
+    assert!(code.contains("res.Channel = \"habr\""));
     assert!(code.contains("res.Kind = \"event\""));
     assert!(code.contains("res.Version = int64(1)"));
     assert!(code.contains("res.Weight = 2.5"));

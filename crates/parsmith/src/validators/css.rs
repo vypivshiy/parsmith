@@ -65,10 +65,8 @@ pub(crate) fn check_balanced_delimiters(s: &str) -> Result<(), String> {
         match ch {
             '[' => stack.push(']'),
             '(' => stack.push(')'),
-            ']' | ')' => {
-                if stack.pop() != Some(ch) {
-                    return Err(format!("unmatched '{ch}' in CSS selector"));
-                }
+            ']' | ')' if stack.pop() != Some(ch) => {
+                return Err(format!("unmatched '{ch}' in CSS selector"));
             }
             _ => {}
         }

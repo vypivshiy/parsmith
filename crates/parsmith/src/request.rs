@@ -169,13 +169,12 @@ impl PlaceholderSpec {
     pub fn parse(text: &str) -> Option<Self> {
         let inner = if let Some(s) = text.strip_prefix("{{").and_then(|s| s.strip_suffix("}}")) {
             s
-        } else if let Some(s) = text.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+        } else {
+            let s = text.strip_prefix('{').and_then(|s| s.strip_suffix('}'))?;
             if s.starts_with('{') || s.ends_with('}') {
                 return None;
             }
             s
-        } else {
-            return None;
         };
 
         Self::parse_inner(inner)

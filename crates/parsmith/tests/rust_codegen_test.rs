@@ -966,10 +966,17 @@ mod tests {{
 fn rust_struct_and_json_value_constants_and_postfix_autocast() {
     let schema = r#"
 define SOURCE="habr"
+extension Feed {
+    now_ts {
+        sig int int
+        rust { emit "let {{out}} = {{in}} + 100;" }
+    }
+}
 
 struct FeedCard {
     @init {
         seed_prefix str value="{{SOURCE}}" { upper }
+        fetched_at int value=0 { !Feed.now_ts }
     }
     source str value="{{SOURCE}}"
     kind value="article"
@@ -977,13 +984,19 @@ struct FeedCard {
     ratio float value=1.5
     is_live bool value=#false
     prefixed_id str value="{{SOURCE}}" { fmt "{{}}-01" }
+    subtitle str? { css ".lead"; text; trim; fallback #null }
+    tags (array)str { css-all ".tag"; text; trim }
+    counts (array)int { css-all ".cnt"; text }
+    scores (array)float { css-all ".score"; text }
     has_badge bool { css ".badge" }
     views int { css ".views"; text; fallback 0 }
     rating float { css ".rating"; text; fallback 0.0 }
+    url { css "a.link"; attr "href" }
 }
 
 json ReleaseCard {
     source str value="{{SOURCE}}"
+    channel str value="{{SOURCE}}"
     kind str value="event"
     version int value=1
     weight float value=2.5
@@ -1003,11 +1016,19 @@ json ReleaseCard {
     assert!(code.contains("let v1 = 1;"));
     assert!(code.contains("let v1 = 1.5;"));
     assert!(code.contains("let v1 = false;"));
+    assert!(code.contains("let v2 = v1 + 100;"));
     assert!(code.contains("let v2 = rt::fmt_value(\"{{}}-01\", &v1);"));
     assert!(code.contains("let v2 = rt::node_bool(&v1);"));
+    assert!(code.contains(
+        "let v3 = v2.into_iter().map(|value| rt::to_int(value, \"FeedCard.counts\")).collect::<Result<Vec<_>, _>>()?;"
+    ));
+    assert!(code.contains(
+        "let v3 = v2.into_iter().map(|value| rt::to_float(value, \"FeedCard.scores\")).collect::<Result<Vec<_>, _>>()?;"
+    ));
     assert!(code.contains("let v3 = rt::to_int(v2, \"FeedCard.views\")?;"));
     assert!(code.contains("let v3 = rt::to_float(v2, \"FeedCard.rating\")?;"));
     assert!(code.contains("let source: String = \"habr\".to_string();"));
+    assert!(code.contains("let channel: String = \"habr\".to_string();"));
     assert!(code.contains("let kind: String = \"event\".to_string();"));
     assert!(code.contains("let version: i64 = 1;"));
     assert!(code.contains("let weight: f64 = 2.5;"));

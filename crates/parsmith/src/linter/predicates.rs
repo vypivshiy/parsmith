@@ -506,10 +506,10 @@ pub fn lint_predicate_list<'a>(
                     require_int_args(unit_path, node, diags);
                 }
             }
-            "len-range" => {
-                if require_arg_count(unit_path, node, Some(2), None, "len-range 1 100", diags) {
-                    require_int_args(unit_path, node, diags);
-                }
+            "len-range"
+                if require_arg_count(unit_path, node, Some(2), None, "len-range 1 100", diags) =>
+            {
+                require_int_args(unit_path, node, diags);
             }
             _ => {}
         }

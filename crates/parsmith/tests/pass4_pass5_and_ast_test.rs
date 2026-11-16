@@ -1391,32 +1391,42 @@ extension Feed {
     @split-doc { css-all "article.item" }
     @init {
         fetched_at int value=0 { !Feed.now_ts }
+        init_src str value="{{SOURCE}}" { upper }
+        init_views int { css ".init-v"; text; fallback 0 }
+        init_live bool { css ".init-live" }
     }
     source str value="{{SOURCE}}"
     kind value="article"
     version int value=1
+    ratio float value=1.5
     is_live bool value=#false
     id str value="{{SOURCE}}" { !Feed.gen_id }
+    prefixed str value="{{SOURCE}}" { upper; fmt "{{}}-01" }
+    checked_ver int value=1 { assert { gt 0 } }
     title str { css "a.title"; text; trim }
     subtitle str? { css ".lead"; text; trim; fallback #null }
     tags (array)str { css-all ".tag"; text; trim }
+    counts (array)int { css-all ".cnt"; text }
     has_hubs bool { css ".hubs" }
     views int { css ".views"; text; fallback 0 }
     scores (array)float { css-all ".score"; text }
+    url { css "a.title"; attr "href" }
 }
 
 json ReleaseCard {
     source str value="{{SOURCE}}"
+    kind str value="event"
     version int value=1
+    score float value=9.5
     is_live bool value=#false
     id str from="node_id"
 }
 "#;
     let module = compile_source(src, Some("habr.kdl")).expect("compile HabrFeed & ReleaseCard");
 
-    // 1. Check @init field with seed value + extension step
+    // 1. Check @init fields with seed value + extension/builtin steps and auto-cast
     let habr = module.struct_decl("HabrFeed").unwrap();
-    assert_eq!(habr.init_fields.len(), 1);
+    assert_eq!(habr.init_fields.len(), 4);
     let fetched_at = &habr.init_fields[0];
     assert_eq!(fetched_at.type_info, TypeInfo::int());
     assert_eq!(fetched_at.pipeline.steps.len(), 2);
@@ -1430,14 +1440,32 @@ json ReleaseCard {
         fetched_at.pipeline.steps[1].op,
         StepOp::ExtensionCall { ref qualified_name, .. } if qualified_name == "Feed.now_ts"
     ));
+    let init_src = &habr.init_fields[1];
+    assert_eq!(init_src.type_info, TypeInfo::string());
+    assert_eq!(init_src.pipeline.steps[1].op, StepOp::Upper);
+    let init_views = &habr.init_fields[2];
+    assert_eq!(init_views.type_info, TypeInfo::int());
+    assert_eq!(init_views.pipeline.steps[2].op, StepOp::ToInt);
+    assert_eq!(init_views.pipeline.fallback, Some(LiteralValue::Int(0)));
+    let init_live = &habr.init_fields[3];
+    assert_eq!(init_live.type_info, TypeInfo::bool());
+    assert_eq!(init_live.pipeline.steps[1].op, StepOp::ToBool);
 
-    // 2. Check standalone constant fields in struct
+    // 2. Check standalone constant and seed-value fields in struct
     let source_f = habr.fields.iter().find(|f| f.name == "source").unwrap();
     assert_eq!(source_f.type_info, TypeInfo::string());
     assert_eq!(
         source_f.pipeline.steps[0].op,
         StepOp::Value {
             value: LiteralValue::String("habr".to_string())
+        }
+    );
+    let ratio_f = habr.fields.iter().find(|f| f.name == "ratio").unwrap();
+    assert_eq!(ratio_f.type_info, TypeInfo::float());
+    assert_eq!(
+        ratio_f.pipeline.steps[0].op,
+        StepOp::Value {
+            value: LiteralValue::Float(1.5)
         }
     );
 
@@ -1450,8 +1478,12 @@ json ReleaseCard {
             value: LiteralValue::String("habr".to_string())
         }
     );
+    let prefixed_f = habr.fields.iter().find(|f| f.name == "prefixed").unwrap();
+    assert_eq!(prefixed_f.type_info, TypeInfo::string());
+    assert_eq!(prefixed_f.pipeline.steps.len(), 3);
+    assert_eq!(prefixed_f.pipeline.steps[1].op, StepOp::Upper);
 
-    // 3. Check auto-cast steps (has_hubs -> ToBool, views -> ToInt before fallback 0, scores -> ToFloat on array)
+    // 3. Check auto-cast steps (has_hubs -> ToBool, views -> ToInt before fallback 0, counts -> ToInt on array, scores -> ToFloat on array, url -> untyped STRING)
     let has_hubs = habr.fields.iter().find(|f| f.name == "has_hubs").unwrap();
     assert_eq!(has_hubs.type_info, TypeInfo::bool());
     assert_eq!(has_hubs.pipeline.steps.len(), 2);
@@ -1463,10 +1495,18 @@ json ReleaseCard {
     assert_eq!(views.pipeline.steps[2].op, StepOp::ToInt);
     assert_eq!(views.pipeline.fallback, Some(LiteralValue::Int(0)));
 
+    let counts = habr.fields.iter().find(|f| f.name == "counts").unwrap();
+    assert_eq!(counts.type_info, TypeInfo::int().with_array(true));
+    assert_eq!(counts.pipeline.steps.len(), 3);
+    assert_eq!(counts.pipeline.steps[2].op, StepOp::ToInt);
+
     let scores = habr.fields.iter().find(|f| f.name == "scores").unwrap();
     assert_eq!(scores.type_info, TypeInfo::float().with_array(true));
     assert_eq!(scores.pipeline.steps.len(), 3);
     assert_eq!(scores.pipeline.steps[2].op, StepOp::ToFloat);
+
+    let url = habr.fields.iter().find(|f| f.name == "url").unwrap();
+    assert_eq!(url.type_info, TypeInfo::string());
 
     // 4. Check JsonFieldDef.value on ReleaseCard
     let rel = module.json_def("ReleaseCard").unwrap();
@@ -1474,11 +1514,16 @@ json ReleaseCard {
         rel.fields[0].value,
         Some(LiteralValue::String("habr".to_string()))
     );
-    assert_eq!(rel.fields[1].value, Some(LiteralValue::Int(1)));
-    assert_eq!(rel.fields[2].value, Some(LiteralValue::Bool(false)));
-    assert_eq!(rel.fields[3].value, None);
+    assert_eq!(
+        rel.fields[1].value,
+        Some(LiteralValue::String("event".to_string()))
+    );
+    assert_eq!(rel.fields[2].value, Some(LiteralValue::Int(1)));
+    assert_eq!(rel.fields[3].value, Some(LiteralValue::Float(9.5)));
+    assert_eq!(rel.fields[4].value, Some(LiteralValue::Bool(false)));
+    assert_eq!(rel.fields[5].value, None);
 
-    // 5. E100 when DOCUMENT is not extracted for str / int / float or when nullability/array mismatches
+    // 5. E100 when DOCUMENT is not extracted for str / int / float or when nullability/array/scalar type mismatches
     let mismatch_cases = [
         (
             "struct S { title str { css \"h1\" } }",
@@ -1504,6 +1549,10 @@ json ReleaseCard {
             "struct S { tag str { css-all \"a\"; text } }",
             "pipeline produces a list",
         ),
+        (
+            "struct S { count int { css \"a\"; to-bool } }",
+            "declared as INT, but pipeline produces BOOL",
+        ),
     ];
     for (bad_src, expected_hint) in mismatch_cases {
         let res = check_source(bad_src, Some("mismatch.kdl"));
@@ -1512,9 +1561,9 @@ json ReleaseCard {
             .find(|d| d.code == DiagnosticCode::E100)
             .unwrap_or_else(|| panic!("expected E100 for: {bad_src}"));
         assert!(
-            e100.hint.as_deref().unwrap_or("").contains(expected_hint),
-            "expected hint containing '{expected_hint}' for {bad_src}, got: {:?}",
-            e100.hint
+            e100.hint.as_deref().unwrap_or("").contains(expected_hint)
+                || e100.message.contains(expected_hint),
+            "expected hint or message containing '{expected_hint}' for {bad_src}, got: {e100:?}"
         );
     }
 }

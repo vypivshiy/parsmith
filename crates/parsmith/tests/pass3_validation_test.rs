@@ -1335,14 +1335,30 @@ extension Feed {
     title str { css "a.title"; text; trim }
     subtitle str? { css ".lead"; text; trim; fallback #null }
     tags (array)str { css-all ".tag"; text; trim }
+    counts (array)int { css-all ".cnt"; text }
+    scores (array)float { css-all ".score"; text }
     has_hubs bool { css ".hubs" }
     views int { css ".views"; text; fallback 0 }
+    url { css "a.title"; attr "href" }
+}
+
+(raw)struct RawFeed {
+    source str value="{{SOURCE}}"
+    seeded str value="{{SOURCE}}" { !Feed.gen_id }
+    token str { trim }
+}
+
+(flat)struct FlatFeed {
+    header str value="{{SOURCE}}"
+    links (array)str { css-all "a"; attr "href" }
 }
 
 json ReleaseCard {
     source str value="{{SOURCE}}"
+    channel str value="{{SOURCE}}"
     raw_source str from="source"
     version int value=1
+    schema_version int value=1
     score float value=9.5
     is_live bool value=#false
     id str from="node_id"
@@ -1367,8 +1383,31 @@ json ReleaseCard {
     assert!(d_prefix.message.contains("prefix type annotation '(str)'"));
     assert!(d_prefix.hint.as_deref().unwrap_or("").contains("title str"));
 
+    let res_init_prefix = check_source(
+        "struct S {\n    @init { (int)ver value=1 }\n    f { @ver }\n}\n",
+        Some("init_prefix.kdl"),
+    );
+    let d_init_prefix = res_init_prefix
+        .errors()
+        .find(|d| d.code == DiagnosticCode::E001)
+        .expect("expected E001 for (int)ver in @init");
+    assert!(
+        d_init_prefix
+            .message
+            .contains("prefix type annotation '(int)'")
+    );
+    assert!(
+        d_init_prefix
+            .hint
+            .as_deref()
+            .unwrap_or("")
+            .contains("ver int")
+    );
+
     // 3. Invalid field arguments / properties / empty block alongside value= -> E001
     let e001_cases = [
+        "struct S { title }",
+        "struct S { title str }",
         "struct S { title str int { css \"a\"; text } }",
         "struct S { title unknown_type { css \"a\"; text } }",
         "struct S { title (tuple)str { css \"a\"; text } }",
@@ -1383,6 +1422,7 @@ json ReleaseCard {
         "json J { a str @omitempty value=\"x\" }",
         "json J { a str @skip value=\"x\" }",
         "json J { a str from=\"wire\" value=\"x\" }",
+        "json J { a str path=\"wire\" value=\"x\" }",
         "json J { a str \"wire\" value=\"x\" }",
         "json J { a value=\"x\" { id int } }",
         "json J {\n    a (dict) value=\"x\" { @key str; @value str }\n}",

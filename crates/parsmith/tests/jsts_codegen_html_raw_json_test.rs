@@ -881,10 +881,17 @@ import * as mJson from "./m_json.EXT";
 fn jsts_struct_and_json_value_constants_and_postfix_autocast() {
     let schema = r#"
 define SOURCE="habr"
+extension Feed {
+    now_ts {
+        sig int int
+        js { emit "const {{out}} = {{in}} + 100;" }
+    }
+}
 
 struct FeedCard {
     @init {
         seed_prefix str value="{{SOURCE}}" { upper }
+        fetched_at int value=0 { !Feed.now_ts }
     }
     source str value="{{SOURCE}}"
     kind value="article"
@@ -892,13 +899,19 @@ struct FeedCard {
     ratio float value=1.5
     is_live bool value=#false
     prefixed_id str value="{{SOURCE}}" { fmt "{{}}-01" }
+    subtitle str? { css ".lead"; text; trim; fallback #null }
+    tags (array)str { css-all ".tag"; text; trim }
+    counts (array)int { css-all ".cnt"; text }
+    scores (array)float { css-all ".score"; text }
     has_badge bool { css ".badge" }
     views int { css ".views"; text; fallback 0 }
     rating float { css ".rating"; text; fallback 0.0 }
+    url { css "a.link"; attr "href" }
 }
 
 json ReleaseCard {
     source str value="{{SOURCE}}"
+    channel str value="{{SOURCE}}"
     kind str value="event"
     version int value=1
     weight float value=2.5
@@ -918,10 +931,14 @@ json ReleaseCard {
     assert!(ts.contains("let v1 = 1;"));
     assert!(ts.contains("let v1 = 1.5;"));
     assert!(ts.contains("let v1 = false;"));
+    assert!(ts.contains("const v2 = v1 + 100;"));
     assert!(ts.contains("let v2 = Boolean(v1);"));
+    assert!(ts.contains("let v3 = v2.map((s) => parseInt(s, 10));"));
+    assert!(ts.contains("let v3 = v2.map((s) => parseFloat(s));"));
     assert!(ts.contains("let v3 = parseInt(v2, 10);"));
     assert!(ts.contains("let v3 = parseFloat(v2);"));
     assert!(ts.contains("source: \"habr\","));
+    assert!(ts.contains("channel: \"habr\","));
     assert!(ts.contains("kind: \"event\","));
     assert!(ts.contains("version: 1,"));
     assert!(ts.contains("weight: 2.5,"));
