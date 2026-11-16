@@ -961,3 +961,56 @@ mod tests {{
         String::from_utf8_lossy(&test_out.stderr)
     );
 }
+
+#[test]
+fn rust_struct_and_json_value_constants_and_postfix_autocast() {
+    let schema = r#"
+define SOURCE="habr"
+
+struct FeedCard {
+    @init {
+        seed_prefix str value="{{SOURCE}}" { upper }
+    }
+    source str value="{{SOURCE}}"
+    kind value="article"
+    version int value=1
+    ratio float value=1.5
+    is_live bool value=#false
+    prefixed_id str value="{{SOURCE}}" { fmt "{{}}-01" }
+    has_badge bool { css ".badge" }
+    views int { css ".views"; text; fallback 0 }
+    rating float { css ".rating"; text; fallback 0.0 }
+}
+
+json ReleaseCard {
+    source str value="{{SOURCE}}"
+    kind str value="event"
+    version int value=1
+    weight float value=2.5
+    is_live bool value=#false
+    id str from="node_id"
+}
+"#;
+    let res = generate_source(
+        schema,
+        Some("feed_card.kdl"),
+        &CodegenOptions::new(Target::Rust),
+    );
+    assert!(!res.has_errors(), "{:?}", res.diagnostics);
+    let code = res.primary_code().unwrap();
+    assert!(code.contains("let v1 = \"habr\".to_string();"));
+    assert!(code.contains("let v1 = \"article\".to_string();"));
+    assert!(code.contains("let v1 = 1;"));
+    assert!(code.contains("let v1 = 1.5;"));
+    assert!(code.contains("let v1 = false;"));
+    assert!(code.contains("let v2 = rt::fmt_value(\"{{}}-01\", &v1);"));
+    assert!(code.contains("let v2 = rt::node_bool(&v1);"));
+    assert!(code.contains("let v3 = rt::to_int(v2, \"FeedCard.views\")?;"));
+    assert!(code.contains("let v3 = rt::to_float(v2, \"FeedCard.rating\")?;"));
+    assert!(code.contains("let source: String = \"habr\".to_string();"));
+    assert!(code.contains("let kind: String = \"event\".to_string();"));
+    assert!(code.contains("let version: i64 = 1;"));
+    assert!(code.contains("let weight: f64 = 2.5;"));
+    assert!(code.contains("let is_live: bool = false;"));
+    assert!(!code.contains("rt::json_path(&value, \"source\""));
+}

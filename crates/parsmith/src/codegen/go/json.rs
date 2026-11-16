@@ -3,7 +3,7 @@
 use crate::ast::{BaseType, JsonDef, JsonFieldDef, Module, TypeInfo};
 use crate::codegen::builder::ModuleBuilder;
 use crate::codegen::go::runtime::go_str;
-use crate::codegen::go::{GoEmitter, emit_aligned_struct_fields, emit_go_doc};
+use crate::codegen::go::{GoEmitter, emit_aligned_struct_fields, emit_go_doc, go_literal};
 use crate::codegen::writer::{CodeWriter, wln};
 use crate::gjson::GjsonStep;
 use crate::json_to_kdl::to_pascal_case;
@@ -109,6 +109,11 @@ impl GoEmitter {
         writer: &mut CodeWriter,
     ) {
         let field_name = to_pascal_case(&field.name);
+        if let Some(ref lit) = field.value {
+            let lit_expr = go_literal(lit);
+            wln!(writer, "res.{field_name} = {lit_expr}");
+            return;
+        }
         let default_wire = to_snake_case(&field.name);
         let wire_path = field.alias.as_deref().unwrap_or(&default_wire);
         let go_wire_path = go_str(wire_path);

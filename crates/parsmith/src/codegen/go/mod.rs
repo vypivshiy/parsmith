@@ -447,7 +447,10 @@ impl GoEmitter {
         let is_arr_out = step.output.is_array;
 
         match &step.op {
-            StepOp::Value { .. } => {}
+            StepOp::Value { value } => {
+                let lit = go_literal(value);
+                wln!(writer, "{nxt} := {lit}");
+            }
             StepOp::LoadInit { name } => {
                 let rcv = receiver(&self.current_struct_name);
                 let camel = to_camel_case(name);
@@ -2179,6 +2182,17 @@ impl GoEmitter {
             emit_aligned_composite_fields(&entries, writer);
         });
         writer.writeln("})");
+    }
+}
+
+pub(crate) fn go_literal(lit: &LiteralValue) -> String {
+    match lit {
+        LiteralValue::Bool(b) => b.to_string(),
+        LiteralValue::Int(n) => format!("int64({n})"),
+        LiteralValue::Float(f) => format!("{f:?}"),
+        LiteralValue::String(s) => go_str(s),
+        LiteralValue::EmptyArray => "[]any{}".to_owned(),
+        LiteralValue::Null => "nil".to_owned(),
     }
 }
 

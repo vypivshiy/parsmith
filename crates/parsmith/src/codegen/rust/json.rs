@@ -3,7 +3,7 @@
 use crate::ast::{BaseType, JsonDef, JsonFieldDef, Module, TypeInfo};
 use crate::codegen::builder::ModuleBuilder;
 use crate::codegen::rust::{
-    RustEmitter, emit_rust_doc, rust_ident, rust_key_type, rust_pascal, rust_str,
+    RustEmitter, emit_rust_doc, rust_ident, rust_key_type, rust_literal, rust_pascal, rust_str,
 };
 use crate::codegen::writer::{CodeWriter, wln};
 use crate::gjson::classify_gjson_path;
@@ -169,9 +169,14 @@ impl RustEmitter {
     ) {
         let info: &TypeInfo = &field.type_info;
         let name = rust_ident(&field.name);
+        let typ = self.resolve_json_field_type(field, module);
+        if let Some(ref lit) = field.value {
+            let lit_expr = rust_literal(lit, &typ);
+            wln!(writer, "let {name}: {typ} = {lit_expr};");
+            return;
+        }
         let wire = field.alias.as_deref().unwrap_or(&field.name);
         let optional = field.is_optional || field.omitempty || info.is_optional || info.omitempty;
-        let typ = self.resolve_json_field_type(field, module);
         let inner_type = typ
             .strip_prefix("Option<")
             .and_then(|s| s.strip_suffix('>'))

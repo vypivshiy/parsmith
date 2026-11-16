@@ -681,3 +681,42 @@ def test_bs4_attr_contract_keyerror_fallback_and_multivalued_attrs() -> None:
         String::from_utf8_lossy(&pytest_out.stderr)
     );
 }
+
+#[test]
+fn python_struct_value_constants_and_postfix_autocast() {
+    let schema = r#"
+define SOURCE="habr"
+
+struct FeedCard {
+    @init {
+        seed_prefix str value="{{SOURCE}}" { upper }
+    }
+    source str value="{{SOURCE}}"
+    kind value="article"
+    version int value=1
+    ratio float value=1.5
+    is_live bool value=#false
+    prefixed_id str value="{{SOURCE}}" { fmt "{{}}-01" }
+    init_ref str { @seed_prefix }
+    has_badge bool { css ".badge" }
+    views int { css ".views"; text; fallback 0 }
+    rating float { css ".rating"; text; fallback 0.0 }
+}
+"#;
+    let res = generate_source(
+        schema,
+        Some("feed_card.kdl"),
+        &CodegenOptions::new(Target::Python),
+    );
+    assert!(!res.has_errors(), "{:?}", res.diagnostics);
+    let code = res.primary_code().unwrap();
+    assert!(code.contains("v1 = 'habr'"));
+    assert!(code.contains("v1 = 'article'"));
+    assert!(code.contains("v1 = 1"));
+    assert!(code.contains("v1 = 1.5"));
+    assert!(code.contains("v1 = False"));
+    assert!(code.contains("v2 = '{}-01'.format(v1)"));
+    assert!(code.contains("v2 = v1 is not None"));
+    assert!(code.contains("v3 = int(v2)"));
+    assert!(code.contains("v3 = float(v2)"));
+}

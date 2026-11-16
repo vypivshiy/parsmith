@@ -952,3 +952,57 @@ golang.org/x/net v0.52.0/go.mod h1:R1MAz7uMZxVMualyPXb+VaqGSa3LIaUqk0eEt3w36Sw=
         String::from_utf8_lossy(&vet.stderr)
     );
 }
+
+#[test]
+fn go_struct_and_json_value_constants_and_postfix_autocast() {
+    let schema = r#"
+define SOURCE="habr"
+
+struct FeedCard {
+    @init {
+        seed_prefix str value="{{SOURCE}}" { upper }
+    }
+    source str value="{{SOURCE}}"
+    kind value="article"
+    version int value=1
+    ratio float value=1.5
+    is_live bool value=#false
+    prefixed_id str value="{{SOURCE}}" { fmt "{{}}-01" }
+    has_badge bool { css ".badge" }
+    views int { css ".views"; text; fallback 0 }
+    rating float { css ".rating"; text; fallback 0.0 }
+}
+
+json ReleaseCard {
+    source str value="{{SOURCE}}"
+    kind str value="event"
+    version int value=1
+    weight float value=2.5
+    is_live bool value=#false
+    id str from="node_id"
+}
+"#;
+    let res = generate_source(
+        schema,
+        Some("feed_card.kdl"),
+        &CodegenOptions::new(Target::Go),
+    );
+    assert!(!res.has_errors(), "{:?}", res.diagnostics);
+    let code = res.primary_code().unwrap();
+    assert_gofmt_clean(code, "feed_card.go");
+    assert!(code.contains("v1 := \"habr\""));
+    assert!(code.contains("v1 := \"article\""));
+    assert!(code.contains("v1 := int64(1)"));
+    assert!(code.contains("v1 := 1.5"));
+    assert!(code.contains("v1 := false"));
+    assert!(code.contains("v2 := rtFmt(\"{{}}-01\", v1)"));
+    assert!(code.contains("v2 := v1.Length() > 0"));
+    assert!(code.contains("v3 := rtToInt(v2)"));
+    assert!(code.contains("v3 := rtToFloat(v2)"));
+    assert!(code.contains("res.Source = \"habr\""));
+    assert!(code.contains("res.Kind = \"event\""));
+    assert!(code.contains("res.Version = int64(1)"));
+    assert!(code.contains("res.Weight = 2.5"));
+    assert!(code.contains("res.IsLive = false"));
+    assert!(!code.contains("gjson.GetBytes(raw, \"source\")"));
+}

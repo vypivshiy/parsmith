@@ -513,7 +513,11 @@ impl RustEmitter {
         let ctx_lit = rust_str(context);
 
         match &step.op {
-            StepOp::Value { .. } => {}
+            StepOp::Value { value } => {
+                let ret_type = Self::resolve_type(&step.output, module);
+                let lit = rust_literal(value, &ret_type);
+                wln!(writer, "let {nxt} = {lit};");
+            }
             StepOp::LoadInit { name } => {
                 let ident = rust_ident(name);
                 wln!(writer, "let {nxt} = self.{ident}.clone();");

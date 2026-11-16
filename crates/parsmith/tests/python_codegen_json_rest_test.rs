@@ -1008,3 +1008,47 @@ def test_rest_monad_ok_errors_unknown_transport_decode_and_programmer_bugs() -> 
         String::from_utf8_lossy(&pytest_out.stderr)
     );
 }
+
+#[test]
+fn python_json_value_constants_typeddict_and_dataclass() {
+    let schema = r#"
+define SOURCE="github"
+
+json ReleaseCard {
+    source str value="{{SOURCE}}"
+    kind str value="event"
+    version int value=1
+    weight float value=2.5
+    is_live bool value=#false
+    id str from="node_id"
+}
+"#;
+    let res_td = generate_source(
+        schema,
+        Some("release_card.kdl"),
+        &CodegenOptions::new(Target::Python).with_models(PythonModels::TypedDict),
+    );
+    assert!(!res_td.has_errors(), "{:?}", res_td.diagnostics);
+    let code_td = res_td.primary_code().unwrap();
+    assert!(code_td.contains("'source': 'github',"));
+    assert!(code_td.contains("'kind': 'event',"));
+    assert!(code_td.contains("'version': 1,"));
+    assert!(code_td.contains("'weight': 2.5,"));
+    assert!(code_td.contains("'is_live': False,"));
+    assert!(code_td.contains("'id': rt_json_req(_d, 'node_id', 'ReleaseCard.id'),"));
+    assert!(!code_td.contains("rt_json_req(_d, 'source'"));
+
+    let res_dc = generate_source(
+        schema,
+        Some("release_card_dc.kdl"),
+        &CodegenOptions::new(Target::Python).with_models(PythonModels::Dataclass),
+    );
+    assert!(!res_dc.has_errors(), "{:?}", res_dc.diagnostics);
+    let code_dc = res_dc.primary_code().unwrap();
+    assert!(code_dc.contains("source='github',"));
+    assert!(code_dc.contains("kind='event',"));
+    assert!(code_dc.contains("version=1,"));
+    assert!(code_dc.contains("weight=2.5,"));
+    assert!(code_dc.contains("is_live=False,"));
+    assert!(code_dc.contains("id=rt_json_req(_d, 'node_id', 'ReleaseCard.id'),"));
+}

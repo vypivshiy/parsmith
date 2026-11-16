@@ -5,7 +5,7 @@ use crate::ast::{BaseType, JsonDef, JsonFieldDef, Module, TypeInfo};
 use crate::codegen::PythonModels;
 use crate::codegen::builder::ModuleBuilder;
 use crate::codegen::python::dom::PyDomSpelling;
-use crate::codegen::python::{PythonEmitter, emit_docstring, py_str};
+use crate::codegen::python::{PythonEmitter, emit_docstring, py_literal, py_str};
 use crate::codegen::writer::{CodeWriter, wln};
 use crate::json_to_kdl::to_pascal_case;
 
@@ -218,6 +218,10 @@ impl<D: PyDomSpelling> PythonEmitter<D> {
                 continue;
             }
             let fname = &field.name;
+            if let Some(ref lit) = field.value {
+                field_entries.push((fname.clone(), py_literal(lit)));
+                continue;
+            }
             let wire_path = field.alias.as_deref().unwrap_or(fname.as_str());
             let target = format!("{schema_name}.{fname}");
             let target_lit = py_str(&target);

@@ -876,3 +876,69 @@ import * as mJson from "./m_json.EXT";
         String::from_utf8_lossy(&node_ts_out.stderr)
     );
 }
+
+#[test]
+fn jsts_struct_and_json_value_constants_and_postfix_autocast() {
+    let schema = r#"
+define SOURCE="habr"
+
+struct FeedCard {
+    @init {
+        seed_prefix str value="{{SOURCE}}" { upper }
+    }
+    source str value="{{SOURCE}}"
+    kind value="article"
+    version int value=1
+    ratio float value=1.5
+    is_live bool value=#false
+    prefixed_id str value="{{SOURCE}}" { fmt "{{}}-01" }
+    has_badge bool { css ".badge" }
+    views int { css ".views"; text; fallback 0 }
+    rating float { css ".rating"; text; fallback 0.0 }
+}
+
+json ReleaseCard {
+    source str value="{{SOURCE}}"
+    kind str value="event"
+    version int value=1
+    weight float value=2.5
+    is_live bool value=#false
+    id str from="node_id"
+}
+"#;
+    let ts_res = generate_source(
+        schema,
+        Some("feed_card.kdl"),
+        &CodegenOptions::new(Target::TypeScript),
+    );
+    assert!(!ts_res.has_errors(), "{:?}", ts_res.diagnostics);
+    let ts = &ts_res.files["feed_card.ts"];
+    assert!(ts.contains("let v1 = \"habr\";"));
+    assert!(ts.contains("let v1 = \"article\";"));
+    assert!(ts.contains("let v1 = 1;"));
+    assert!(ts.contains("let v1 = 1.5;"));
+    assert!(ts.contains("let v1 = false;"));
+    assert!(ts.contains("let v2 = Boolean(v1);"));
+    assert!(ts.contains("let v3 = parseInt(v2, 10);"));
+    assert!(ts.contains("let v3 = parseFloat(v2);"));
+    assert!(ts.contains("source: \"habr\","));
+    assert!(ts.contains("kind: \"event\","));
+    assert!(ts.contains("version: 1,"));
+    assert!(ts.contains("weight: 2.5,"));
+    assert!(ts.contains("is_live: false,"));
+    assert!(ts.contains("id: rtJsonField(data, \"node_id\", \"ReleaseCard.id\"),"));
+    assert!(!ts.contains("rtJsonField(data, \"source\""));
+
+    let js_res = generate_source(
+        schema,
+        Some("feed_card.kdl"),
+        &CodegenOptions::new(Target::JavaScript),
+    );
+    assert!(!js_res.has_errors(), "{:?}", js_res.diagnostics);
+    let js = &js_res.files["feed_card.js"];
+    let dts = &js_res.files["feed_card.d.ts"];
+    assert!(js.contains("let v1 = \"habr\";"));
+    assert!(js.contains("source: \"habr\","));
+    assert!(dts.contains("source: string;"));
+    assert!(dts.contains("version: number;"));
+}

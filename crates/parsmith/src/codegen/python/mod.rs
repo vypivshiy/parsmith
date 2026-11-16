@@ -551,7 +551,10 @@ impl<D: PyDomSpelling> PythonEmitter<D> {
         let is_arr_out = step.output.is_array;
 
         match &step.op {
-            StepOp::Value { .. } => {}
+            StepOp::Value { value } => {
+                let lit = py_literal(value);
+                wln!(writer, "{nxt} = {lit}");
+            }
             StepOp::LoadInit { name } => {
                 let snake = to_snake_case(name);
                 wln!(writer, "{nxt} = self._{snake}");

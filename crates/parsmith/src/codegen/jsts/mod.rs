@@ -330,6 +330,15 @@ impl JsTsEmitter {
 
         for field in &active_fields {
             let canonical = &field.name;
+            if let Some(ref lit) = field.value {
+                let obj_key = if is_js_ident(canonical) {
+                    canonical.clone()
+                } else {
+                    js_str(canonical)
+                };
+                obj_entries.push(format!("{obj_key}: {},", js_literal(lit)));
+                continue;
+            }
             let wire_path = field.alias.as_deref().unwrap_or(&field.name);
             let target = format!("{pascal}.{canonical}");
             let (is_direct_key, unescaped_key) = classify_gjson_path(wire_path);
@@ -589,7 +598,10 @@ impl JsTsEmitter {
         let is_ts = self.mode.is_ts();
 
         match &step.op {
-            StepOp::Value { .. } => {}
+            StepOp::Value { value } => {
+                let lit = js_literal(value);
+                wln!(writer, "let {nxt} = {lit};");
+            }
             StepOp::LoadInit { name } => {
                 let camel = to_camel_case(name);
                 wln!(writer, "let {nxt} = this._{camel};");
