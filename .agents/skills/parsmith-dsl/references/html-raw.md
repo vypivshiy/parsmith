@@ -4,9 +4,12 @@
 
 - **Scalar Base Types**: `DOCUMENT` (`DOC`), `STRING` (`STR`), `INT` (64-bit), `FLOAT` (64-bit), `BOOL`, `NULL`, `NESTED` (terminal), `JSON` (terminal).
 - **Modifiers**: `T[]` (`is_array=true`), `T?` (`is_optional=true`, produced by `fallback #null` on `STRING`/`INT`/`FLOAT` or `?` in `json`), `dict[K, V]` (in `json`).
-- **Pipeline Start Type**: `DOCUMENT` in HTML structs/`fn`; `STRING` in `(raw)struct`/`(raw)fn`; or `TypeOf(name)` when starting with `@<name>`.
+- **Pipeline Start Type**: `DOCUMENT` in HTML structs/`fn`; `STRING` in `(raw)struct`/`(raw)fn`; `TypeOf(value)` when `value=<literal>` is present; or `TypeOf(name)` when starting with `@<name>`.
+- **Field Declarations (`<name> [<type>] [value=<literal>] [{ <pipeline> }]`)**:
+  - **Optional postfix `<type>`** (`str`, `int`, `float`, `bool`, `T?`, `(array)T`) on `struct` and `@init` fields: keeps automatic inference when omitted; when specified on a pipeline field, auto-inserts `to-bool` (`Any -> BOOL`), `to-int` (`STR -> INT`), or `to-float` (`STR -> FLOAT`) before any terminal `fallback` and checks final `TypeInfo` (`E100`; never implicitly extracts `text` from `DOC`). Prefix field annotations (`(str)field`) are rejected (`E001`).
+  - **Constant & seed `value=<literal>`** (`str` with `{{DEFINE}}` interpolation, `int`, `float`, `bool`; forbidden in `(table)struct`, `E203`): standalone constant field when `{}` is omitted (`source str value="habr"`), or initial pipeline seed when followed by `{ <pipeline> }` (`fetched_at int value=0 { !Feed.now_ts }`).
 - **Struct Directives** (for `item`, `list`, `table`, `dict`, `flat`, `raw`):
-  - `@init { <name> { <pipeline> }; ... }` — precomputes & caches values on the parser instance; referenced as **first op** in fields via `@<name>` (`E301` if undeclared).
+  - `@init { <name> [<type>] [value=<literal>] [{ <pipeline> }]; ... }` — precomputes & caches values on the parser instance; referenced as **first op** in fields via `@<name>` (`E301` if undeclared).
   - `@pre-validate { assert ["<msg>"] { <conditions> } }` — validates input before `parse()`; raises `RtAssertionError` (`rt::RtError` in Rust).
   - `@check <name> { <pipeline>; to-bool; [fallback #false] }` — emits public boolean method (`is_ok()` / `isOk()` / `IsOk()`); pipeline must end in `BOOL` (`E100`).
   - `@request [name="<kebab-id>"] [response-path="<gjson>"] [response-join="\n"] #"<curl_or_http>"#` — emits transport-agnostic `fetch` / `async_fetch` constructor.

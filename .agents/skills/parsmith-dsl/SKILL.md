@@ -50,8 +50,8 @@ Select the construct matching the source payload. Combine multiple structs in on
 | :--- | :--- | :--- | :--- |
 | **JSON HTTP endpoint** (`application/json`, root `{` or `[`, cURL/HAR trace) | `(rest)struct Name` + `json` schemas | 1+ `@request` (`name="<kebab-id>"`, `response="<Schema>"\|#null`); `@error[:<suffix>] <status> <Schema> ["pos.key"...] [k=v ...]` | `references/rest.md` + `references/json.md` |
 | **HTML with embedded JSON** (`application/ld+json`, `__NEXT_DATA__`, inline JS var / `JSON.parse`, `data-*` JSON attribute) | `struct Name` + `json` schemas | Extract raw string (`css ...; raw inner` / `attr ...; unescape` / `re`) $\to$ `jsonify <Schema> [path="<gjson>"]` | `references/html-raw.md` + `references/json.md` |
-| **HTML single detail object** | `struct Name` (`(item)struct`) | 1+ regular fields starting with `css`/`css-all`/`xpath` or `@<init_field>` | `references/html-raw.md` |
-| **HTML repeating cards or horizontal table rows** | `(list)struct Name` | `@split-doc { css-all "<selector>" }` + item fields (append `fallback #null` on optional elements; `css-all` for list fields) | `references/html-raw.md` |
+| **HTML single detail object** | `struct Name` (`(item)struct`) | 1+ regular fields (`<name> [<type>] [value=<literal>] [{ <pipeline> }]`) starting with `css`/`css-all`/`xpath`, `@<init_field>`, or `value=<literal>` | `references/html-raw.md` |
+| **HTML repeating cards or horizontal table rows** | `(list)struct Name` | `@split-doc { css-all "<selector>" }` + item fields (`<name> [<type>] [value=<literal>] [{ <pipeline> }]`; append `fallback #null` on optional elements; `css-all` for list fields) | `references/html-raw.md` |
 | **HTML key-value table / `<dl>` / label-value rows** | `(table)struct Name` | `@table { css "<container>" }`, `@rows { css-all "<rows>" }`, `@match { css "<key>"; ... }`, `@value { css "<val>"; ... }`; every field starts with `match { eq\|starts\|contains\|re ... }` | `references/html-raw.md` |
 | **HTML dynamic map** (`<meta>` tags, open-ended key-value pairs) | `(dict)struct Name` | `@split-doc`, `@key`, `@value` (no regular fields) | `references/html-raw.md` |
 | **HTML flat string list** | `(flat)struct Name [keep-order=#true]` | Every field pipeline must return `STRING` or `STRING[]` | `references/html-raw.md` |
@@ -63,18 +63,22 @@ Select the construct matching the source payload. Combine multiple structs in on
 
 ### Step 2 — Core Syntax Summary
 
-#### 2.1 `json` Schemas (used by both `(rest)struct` and `jsonify`)
-- **Top-level kinds**: `json Name { ... }`, `(array)json Name { ... }`, `(dict)json Name { [@key str|int|float|bool;] @value <TypeOrBlock>; }`.
-- **Field syntax**: `<name> <type>[?] [from="<gjson_path>"] [@omitempty] [@skip]`
+#### 2.1 `json` Schemas (used by both `(rest)struct` and `jsonify`) & `struct` Field Grammar
+- **Top-level `json` kinds**: `json Name { ... }`, `(array)json Name { ... }`, `(dict)json Name { [@key str|int|float|bool;] @value <TypeOrBlock>; }`.
+- **`json` field syntax**: `<name> <type>[?] [from="<gjson_path>" | value=<literal>] [@omitempty] [@skip]`
   - `?`: value may be `null` (`T | None` / `T | null` / `*T` / `Option<T>`).
   - `@omitempty`: key may be absent from JSON object (`NotRequired[T]` / `?:` / `,omitempty` / `#[serde(default)]`). Combine `T? @omitempty` when a key can be either absent or `null`.
   - `@skip`: validated by linter, omitted from generated types & allowlist projector (`type` defaults to `str`).
   - `from="<gjson_path>"`: maps wire keys (`from="from"`, `from=#"os\.version"#`), nested paths (`from="data.user.0.name"`), array count (`from="items.#"` $\to$ `int`), or array projection (`from="tags.#.name"` $\to$ `(array)str`).
+  - `value=<str|int|float|bool>`: injects a constant scalar into the projected model without reading wire JSON (supports `{{DEFINE}}` expansion in strings; cannot combine with `?`, `(array)`, `(dict)`, `from=`, `@omitempty`, `@skip`, or inline `{}`).
   - **Inline blocks (hoisted post-order ahead of parent)**:
     - `field[?] { ... }` $\to$ synthesizes `{Parent}{FieldPascal}`
     - `field ModelName[?] { ... }` $\to$ `ModelName`
     - `field (array)ItemModel[?] { ... }` $\to$ `ItemModel` (explicit `ItemModel` is **mandatory**, `E001`)
     - `field (dict)[DictName] { [@key str;] @value [ValModel][?] { ... } }` $\to$ `{DictName}Value` / `{Parent}{FieldPascal}Value`
+- **`struct` & `@init` field syntax**: `<name> [<type>] [value=<literal>] [{ <pipeline> }]`
+  - Optional postfix `<type>` (`str`, `int`, `float`, `bool`, `?`, `(array)`): keeps automatic inference when omitted; when specified on a `{ <pipeline> }` field, auto-inserts `to-bool` (`Any -> BOOL`), `to-int` (`STR -> INT`), or `to-float` (`STR -> FLOAT`) before any terminal `fallback` and enforces `E100` (never implicitly extracts `text` from `DOC`). Prefix field annotations like `(str)field` are forbidden (`E001`).
+  - `value=<str|int|float|bool>` (supports `{{DEFINE}}` expansion in strings; forbidden in `(table)struct`, `E203`): defines a standalone constant field when `{}` is omitted (`source str value="example"`), or seeds step 0 of `{ <pipeline> }` (`fetched_at int value=0 { !Feed.now_ts }`).
 
 #### 2.2 `@request` & `@error[:<suffix>]`
 - **`@request` formats**: raw `HTTP/1.1` / `HTTP/2`, POSIX `curl`, or scalar `define` constant (`define BASE="https://..."`, `define REQ="curl '{{BASE}}/items/{{id:int}}'"`).
@@ -118,7 +122,10 @@ json ApiError { message str }
 // 2. HTML (list)struct + embedded JSON via jsonify
 (list)struct CatalogPage {
     @split-doc { css-all ".product-card" }
-    title   { css "h3"; text; normalize-space }
+    source  str  value="example"
+    title   str  { css "h3"; text; normalize-space }
+    views   int  { css ".views"; text; fallback 0 }
+    in_stock bool { css ".badge-in-stock" }
     url     { css "a.card-link"; attr "href"; fmt "{{BASE-URL}}{{}}" }
     payload { css "script.item-json"; raw inner; jsonify HydratedItem }
 }

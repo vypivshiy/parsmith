@@ -60,9 +60,9 @@ json AnimeResponse {
 
 ---
 
-## 2. Field Modifiers (`?`, `@omitempty`, `@skip`, `(array)`) Across Targets
+## 2. Field Modifiers (`?`, `@omitempty`, `@skip`, `(array)`, `value=`) Across Targets
 
-Syntax: `<field_name> <type>[?] [from="<gjson_path>"] [@omitempty] [@skip]`
+Syntax: `<field_name> <type>[?] [from="<gjson_path>" | value=<literal>] [@omitempty] [@skip]`
 
 | Modifier | Wire Semantics | Python | TS / JS | Go | Rust | Elixir / PHP / C# / Kotlin |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -70,6 +70,7 @@ Syntax: `<field_name> <type>[?] [from="<gjson_path>"] [@omitempty] [@skip]`
 | `T?` | Key required, value may be `null` | `T \| None` | `T \| null` | `*T` | `Option<T>` | `T \| nil` / `?T` / `T?` |
 | `@omitempty` | Key may be absent from JSON object | `NotRequired[T]` | `field?: T` | `*T` + `,omitempty` | `Option<T>` + `#[serde(default)]` | `T \| nil` / `?T` / `T?` |
 | `T? @omitempty` | Key may be absent OR `null` | `NotRequired[T \| None]` | `field?: T \| null` | `*T` + `,omitempty` | `Option<T>` + `#[serde(default)]` | `T \| nil` / `?T` / `T?` |
+| `value=<literal>` | Scalar constant (`str` with `{{DEFINE}}`, `int`, `float`, `bool`) injected directly by projector without reading wire JSON (cannot combine with `?`, `(array)`, `(dict)`, `from=`, `@omitempty`, `@skip`, or inline `{}`) | `T` (constant) | `T` (constant) | `T` (constant) | `T` (constant) | `T` (constant) |
 | `@skip` | Validated by linter; omitted from output types & projector (`type` defaults to `str`) | omitted | omitted | omitted | omitted | omitted |
 
 ---
