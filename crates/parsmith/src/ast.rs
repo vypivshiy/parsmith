@@ -306,6 +306,19 @@ impl TypeInfo {
     pub fn ref_name(&self) -> Option<&str> {
         self.reference.as_deref().or_else(|| self.base.ref_name())
     }
+
+    /// Formats this [`TypeInfo`] using canonical DSL diagnostic notation (`STRING`, `LIST_INT`, `STRING?`).
+    pub fn dsl_name(&self) -> String {
+        let mut s = if self.is_array {
+            format!("LIST_{}", self.base.dsl_name())
+        } else {
+            self.base.dsl_name().to_owned()
+        };
+        if self.is_optional {
+            s.push('?');
+        }
+        s
+    }
 }
 
 /// Struct parsing strategy (`item`, `list`, `dict`, `table`, `flat`, `raw`, `rest`).

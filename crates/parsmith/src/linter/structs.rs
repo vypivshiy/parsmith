@@ -707,32 +707,7 @@ fn lint_field_header_and_value(
 
         let lit_base = match &val_prop.value {
             KdlValue::String(s) => {
-                for token in crate::linter::top_level::extract_double_brace_tokens(s) {
-                    if crate::linter::is_define_name(token) {
-                        if !env.defines.contains_key(token)
-                            && !env.all_program_defines.contains(token)
-                        {
-                            diags.push(make_error(
-                                &unit.path,
-                                DiagnosticCode::E300,
-                                val_prop.value_span,
-                                format!("undefined define '{token}' in value=\"{s}\""),
-                                format!("declare 'define {token}=\"...\"' before use"),
-                            ));
-                        } else if matches!(env.defines.get(token), Some(DefineEntry::Block { .. }))
-                        {
-                            diags.push(make_error(
-                                &unit.path,
-                                DiagnosticCode::E002,
-                                val_prop.value_span,
-                                format!(
-                                    "cannot interpolate block define '{token}' in value=\"{s}\""
-                                ),
-                                format!("use a scalar define: define {token}=\"...\""),
-                            ));
-                        }
-                    }
-                }
+                env.lint_value_string_defines(&unit.path, s, val_prop.value_span, diags);
                 Some(BaseType::String)
             }
             KdlValue::Int(_) => Some(BaseType::Int),
@@ -763,14 +738,7 @@ fn lint_field_header_and_value(
         if !has_ops {
             if let (Some(target_ti), Some(actual_base)) = (&declared_type, &lit_base) {
                 if target_ti.is_array || target_ti.is_optional || &target_ti.base != actual_base {
-                    let mut target_repr = if target_ti.is_array {
-                        format!("LIST_{}", target_ti.base.dsl_name())
-                    } else {
-                        target_ti.base.dsl_name().to_owned()
-                    };
-                    if target_ti.is_optional {
-                        target_repr.push('?');
-                    }
+                    let target_repr = target_ti.dsl_name();
                     diags.push(make_error(
                         &unit.path,
                         DiagnosticCode::E100,
@@ -825,6 +793,19 @@ fn lint_regular_field(
     );
     if expanded.is_empty() {
         return;
+    }
+
+    if field_node.prop("value").is_some() && expanded[0].name().starts_with('@') {
+        diags.push(make_error(
+            &unit.path,
+            DiagnosticCode::E203,
+            expanded[0].span(),
+            format!(
+                "'{}' must be the first operation in a field pipeline (cannot combine with 'value=')",
+                expanded[0].name()
+            ),
+            "remove 'value=' or remove the '@init' reference",
+        ));
     }
 
     let is_single_nested = expanded.len() == 1 && expanded[0].name() == "nested";

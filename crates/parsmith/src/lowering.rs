@@ -710,13 +710,9 @@ impl<'a> LoweringCtx<'a> {
             let alias = extract_json_field_alias(node, env, positional_alias.as_deref());
             let gjson_path = parse_field_gjson_path(&name, alias.as_deref());
             let doc = extract_json_field_doc(node, env);
-            let value = node.prop("value").and_then(|p| match &p.value {
-                KdlValue::String(s) => Some(LiteralValue::String(env.resolve_str_arg(s))),
-                KdlValue::Int(n) => Some(LiteralValue::Int(*n as i64)),
-                KdlValue::Float(f) => Some(LiteralValue::Float(*f)),
-                KdlValue::Bool(b) => Some(LiteralValue::Bool(*b)),
-                KdlValue::Null => None,
-            });
+            let value = node
+                .prop("value")
+                .and_then(|p| lower_scalar_kdl_value(&p.value, env).map(|(lit, _)| lit));
 
             fields.push(JsonFieldDef {
                 name,
@@ -1163,17 +1159,7 @@ impl<'a> LoweringCtx<'a> {
 
         let seed_value = if !is_table_field {
             field_node.prop("value").and_then(|prop| {
-                let (lit, ti) = match &prop.value {
-                    KdlValue::String(s) => (
-                        LiteralValue::String(env.resolve_str_arg(s)),
-                        TypeInfo::string(),
-                    ),
-                    KdlValue::Int(n) => (LiteralValue::Int(*n as i64), TypeInfo::int()),
-                    KdlValue::Float(f) => (LiteralValue::Float(*f), TypeInfo::float()),
-                    KdlValue::Bool(b) => (LiteralValue::Bool(*b), TypeInfo::bool()),
-                    KdlValue::Null => return None,
-                };
-                Some((lit, ti, prop.span))
+                lower_scalar_kdl_value(&prop.value, env).map(|(lit, ti)| (lit, ti, prop.span))
             })
         } else {
             None
@@ -1186,7 +1172,12 @@ impl<'a> LoweringCtx<'a> {
             start_type,
             init_types,
             false,
-            Some((field_name, field_node.span(), declared_type, seed_value)),
+            Some(FieldPipelineMeta {
+                field_name,
+                field_span: field_node.span(),
+                declared_type,
+                seed_value,
+            }),
         )
     }
 
@@ -1210,7 +1201,7 @@ impl<'a> LoweringCtx<'a> {
         )
     }
 
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
     fn lower_pipeline_inner(
         &mut self,
         unit: &'a SourceUnit,
@@ -1219,18 +1210,13 @@ impl<'a> LoweringCtx<'a> {
         start_type: TypeInfo,
         init_types: &IndexMap<String, TypeInfo>,
         is_pre_validate: bool,
-        field_meta: Option<(
-            &str,
-            Span,
-            Option<TypeInfo>,
-            Option<(LiteralValue, TypeInfo, Span)>,
-        )>,
+        field_meta: Option<FieldPipelineMeta<'_>>,
     ) -> Pipeline {
         let expanded = crate::linter::structs::expand_defines(raw_nodes, self.program, env);
         let has_pipeline_ops = !expanded.is_empty();
 
         let (field_name, field_span, declared_type, seed_value) = match field_meta {
-            Some((n, s, dt, sv)) => (n, s, dt, sv),
+            Some(m) => (m.field_name, m.field_span, m.declared_type, m.seed_value),
             None => ("", Span::EMPTY, None, None),
         };
 
@@ -1588,7 +1574,7 @@ impl<'a> LoweringCtx<'a> {
             if has_pipeline_ops && !steps.is_empty() {
                 if target_ti.base == BaseType::Bool
                     && !target_ti.is_array
-                    && current.base != BaseType::Bool
+                    && (current.base != BaseType::Bool || current.is_array)
                     && current.base != BaseType::Auto
                 {
                     let out_ti = TypeInfo::bool();
@@ -1676,8 +1662,8 @@ impl<'a> LoweringCtx<'a> {
                         field_span,
                         format!(
                             "field '{field_name}' declared as {}, but pipeline produces {}",
-                            format_type_info_dsl(target_ti),
-                            format_type_info_dsl(&current),
+                            target_ti.dsl_name(),
+                            current.dsl_name(),
                         ),
                         hint,
                     ));
@@ -2139,16 +2125,24 @@ fn parse_extension_target_block(target_node: NodeRef<'_>) -> ExtensionTargetBloc
     }
 }
 
-fn format_type_info_dsl(ti: &TypeInfo) -> String {
-    let mut s = if ti.is_array {
-        format!("LIST_{}", ti.base.dsl_name())
-    } else {
-        ti.base.dsl_name().to_owned()
-    };
-    if ti.is_optional {
-        s.push('?');
+struct FieldPipelineMeta<'a> {
+    field_name: &'a str,
+    field_span: Span,
+    declared_type: Option<TypeInfo>,
+    seed_value: Option<(LiteralValue, TypeInfo, Span)>,
+}
+
+fn lower_scalar_kdl_value(val: &KdlValue, env: &UnitEnv) -> Option<(LiteralValue, TypeInfo)> {
+    match val {
+        KdlValue::String(s) => Some((
+            LiteralValue::String(env.resolve_str_arg(s)),
+            TypeInfo::string(),
+        )),
+        KdlValue::Int(n) => Some((LiteralValue::Int(*n as i64), TypeInfo::int())),
+        KdlValue::Float(f) => Some((LiteralValue::Float(*f), TypeInfo::float())),
+        KdlValue::Bool(b) => Some((LiteralValue::Bool(*b), TypeInfo::bool())),
+        KdlValue::Null => None,
     }
-    s
 }
 
 fn extract_json_field_alias(

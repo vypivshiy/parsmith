@@ -143,6 +143,37 @@ impl UnitEnv {
         }
         interpolate_scalar_defines(raw, &self.scalar_strings)
     }
+
+    /// Validates `{{UPPER_NAME}}` define interpolations inside a `value="..."` string literal (`E300`, `E002`).
+    pub fn lint_value_string_defines(
+        &self,
+        unit_path: &str,
+        raw: &str,
+        value_span: Span,
+        diags: &mut Vec<Diagnostic>,
+    ) {
+        for token in crate::linter::top_level::extract_double_brace_tokens(raw) {
+            if is_define_name(token) {
+                if !self.defines.contains_key(token) && !self.all_program_defines.contains(token) {
+                    diags.push(make_error(
+                        unit_path,
+                        DiagnosticCode::E300,
+                        value_span,
+                        format!("undefined define '{token}' in value=\"{raw}\""),
+                        format!("declare 'define {token}=\"...\"' before use"),
+                    ));
+                } else if matches!(self.defines.get(token), Some(DefineEntry::Block { .. })) {
+                    diags.push(make_error(
+                        unit_path,
+                        DiagnosticCode::E002,
+                        value_span,
+                        format!("cannot interpolate block define '{token}' in value=\"{raw}\""),
+                        format!("use a scalar define: define {token}=\"...\""),
+                    ));
+                }
+            }
+        }
+    }
 }
 
 /// Expands `{{UPPER_NAME}}` references using `scalars`, leaving unknown or lowercase `{{param}}` tokens intact.

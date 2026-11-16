@@ -892,34 +892,7 @@ fn lint_json_children<'a>(
         if let Some(val_prop) = field_node.prop("value") {
             let lit_type_str: Option<&str> = match &val_prop.value {
                 KdlValue::String(s) => {
-                    for token in crate::linter::top_level::extract_double_brace_tokens(s) {
-                        if crate::linter::is_define_name(token) {
-                            if !env.defines.contains_key(token)
-                                && !env.all_program_defines.contains(token)
-                            {
-                                diags.push(make_error(
-                                    &unit.path,
-                                    DiagnosticCode::E300,
-                                    val_prop.value_span,
-                                    format!("undefined define '{token}' in value=\"{s}\""),
-                                    format!("declare 'define {token}=\"...\"' before use"),
-                                ));
-                            } else if matches!(
-                                env.defines.get(token),
-                                Some(DefineEntry::Block { .. })
-                            ) {
-                                diags.push(make_error(
-                                    &unit.path,
-                                    DiagnosticCode::E002,
-                                    val_prop.value_span,
-                                    format!(
-                                        "cannot interpolate block define '{token}' in value=\"{s}\""
-                                    ),
-                                    format!("use a scalar define: define {token}=\"...\""),
-                                ));
-                            }
-                        }
-                    }
+                    env.lint_value_string_defines(&unit.path, s, val_prop.value_span, diags);
                     Some("str")
                 }
                 KdlValue::Int(_) => Some("int"),
