@@ -315,7 +315,7 @@ parsmith version [-f text|json]
 ```
 
 - `parsmith version` (or `-f text`): `parsmith 1.0.0`
-- `parsmith version -f json`: `{"name":"parsmith","version":"1.0.0"}`
+- `parsmith version -f json`: `{"name":"parsmith","version":"1.1.0"}`
 
 ---
 

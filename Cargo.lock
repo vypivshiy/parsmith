@@ -505,7 +505,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "parsmith"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "clap",
  "cssparser",
@@ -521,7 +521,7 @@ dependencies = [
 
 [[package]]
 name = "parsmith-js"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "napi",
  "napi-build",
@@ -533,7 +533,7 @@ dependencies = [
 
 [[package]]
 name = "parsmith-py"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "parsmith",
  "pyo3",
@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "parsmith-wasm"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "indexmap",
  "parsmith",

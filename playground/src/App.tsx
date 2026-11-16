@@ -305,7 +305,7 @@ export function App() {
               <span>Loading parsmith WASM…</span>
             )}
             {status === "ready" && !workerError && (
-              <span>Ready · parsmith v{version ?? "1.0.0"}</span>
+              <span>Ready · parsmith v{version ?? "1.1.0"}</span>
             )}
             {(status === "error" || Boolean(workerError)) && (
               <span title={workerError ?? undefined}>

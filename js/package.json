@@ -1,6 +1,6 @@
 {
   "name": "parsmith",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Node-API (napi-rs) & WebAssembly JavaScript/TypeScript SDK for the parsmith KDL 2.0 Schema DSL v2.1 compiler, linter, and multi-target codegen engine",
   "license": "MIT",
   "author": "vypivshiy",
