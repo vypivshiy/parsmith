@@ -23,21 +23,13 @@ function loadNativeAddon() {
     return require("./wasm-fallback.cjs");
   }
 
-  // 1. Check for prebuilt .node artifacts inside js/
+  // 1. Check for prebuilt .node artifacts inside js/ and Cargo target/{release,debug} shared libraries
   const nodeCandidates = [
     path.join(jsDir, `parsmith.${process.platform}-${process.arch}.node`),
     path.join(jsDir, "parsmith.node"),
     path.join(jsDir, "index.node"),
   ];
 
-  const existingNode = nodeCandidates.find((p) => fs.existsSync(p));
-  if (existingNode) {
-    const mod = { exports: {} };
-    process.dlopen(mod, existingNode);
-    return mod.exports;
-  }
-
-  // 2. Fallback to Cargo target/{release,debug} shared libraries
   const libName = getCargoCdylibName();
   const targetDir = path.join(repoRoot, "target");
   const cargoCandidates = [
@@ -45,13 +37,13 @@ function loadNativeAddon() {
     path.join(targetDir, "debug", libName),
   ];
 
-  const existingCargo = cargoCandidates
+  const existingCandidates = [...nodeCandidates, ...cargoCandidates]
     .filter((p) => fs.existsSync(p))
     .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
 
-  if (existingCargo.length > 0) {
+  if (existingCandidates.length > 0) {
     const mod = { exports: {} };
-    process.dlopen(mod, existingCargo[0]);
+    process.dlopen(mod, existingCandidates[0]);
     return mod.exports;
   }
 

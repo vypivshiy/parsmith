@@ -951,8 +951,7 @@ fn finish_generation(
     // An explicitly passed `_*.kdl` helper file with no structs/fns/json_defs produces no parser file.
     let is_underscore_helper = path_hint
         .or(Some(module.source_file.as_str()))
-        .and_then(|p| Path::new(p).file_name())
-        .and_then(|n| n.to_str())
+        .and_then(|p| p.rsplit(['/', '\\']).next())
         .is_some_and(|n| n.starts_with('_'));
     if is_underscore_helper && !module.is_emittable() {
         return GenerateResult {
@@ -981,12 +980,14 @@ fn resolve_module_stem(
         return stem.clone();
     }
     let raw_path = path_hint.unwrap_or(&module.source_file);
-    if !raw_path.is_empty()
-        && let Some(stem) = Path::new(raw_path).file_stem().and_then(|s| s.to_str())
-        && !stem.is_empty()
-        && stem != "<memory>"
-    {
-        return stem.to_owned();
+    if !raw_path.is_empty() {
+        let leaf = raw_path.rsplit(['/', '\\']).next().unwrap_or(raw_path);
+        if let Some(stem) = Path::new(leaf).file_stem().and_then(|s| s.to_str())
+            && !stem.is_empty()
+            && stem != "<memory>"
+        {
+            return stem.to_owned();
+        }
     }
     "schema".to_owned()
 }
