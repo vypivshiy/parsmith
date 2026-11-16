@@ -4,7 +4,8 @@
 use crate::ast::{BaseType, JsonDef, JsonFieldDef, Module, TypeInfo};
 use crate::codegen::builder::ModuleBuilder;
 use crate::codegen::kotlin::{
-    KotlinEmitter, emit_kotlin_doc, kotlin_ident, kotlin_key_type, kotlin_pascal, kotlin_str,
+    KotlinEmitter, emit_kotlin_doc, kotlin_ident, kotlin_key_type, kotlin_literal, kotlin_pascal,
+    kotlin_str,
 };
 use crate::codegen::writer::{CodeWriter, wln};
 use crate::linter::symbols::to_snake_case;
@@ -317,6 +318,11 @@ impl KotlinEmitter {
             || field.type_info.is_optional
             || field.type_info.omitempty;
         let typ = self.resolve_json_field_type(field, module);
+        if let Some(ref lit) = field.value {
+            let lit_expr = kotlin_literal(lit);
+            wln!(writer, "val {f_ident}: {typ} = {lit_expr}");
+            return;
+        }
         let path_lit = kotlin_str(wire);
         let ctx_lit = kotlin_str(&format!("{schema_name}.{}", field.name));
 

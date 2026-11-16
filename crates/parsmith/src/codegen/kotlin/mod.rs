@@ -502,7 +502,10 @@ impl KotlinEmitter {
         let ctx_lit = kotlin_str(context);
 
         match &step.op {
-            StepOp::Value { .. } => {}
+            StepOp::Value { value } => {
+                let lit = kotlin_literal(value);
+                wln!(writer, "val {nxt} = {lit}");
+            }
             StepOp::LoadInit { name } => {
                 let ident = to_camel_case(&to_snake_case(name));
                 wln!(writer, "val {nxt} = this._{ident}");

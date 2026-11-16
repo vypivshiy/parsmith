@@ -3,7 +3,8 @@
 use crate::ast::{BaseType, JsonDef, JsonFieldDef, Module, TypeInfo};
 use crate::codegen::builder::ModuleBuilder;
 use crate::codegen::csharp::{
-    CSharpEmitter, csharp_ident, csharp_key_type, csharp_pascal, csharp_str, emit_csharp_doc,
+    CSharpEmitter, csharp_ident, csharp_key_type, csharp_literal, csharp_pascal, csharp_str,
+    emit_csharp_doc,
 };
 use crate::codegen::writer::{CodeWriter, wln};
 use crate::gjson::classify_gjson_path;
@@ -332,6 +333,11 @@ impl CSharpEmitter {
             || field.type_info.is_optional
             || field.type_info.omitempty;
         let full_typ = self.resolve_json_field_type(field, module);
+        if let Some(ref lit) = field.value {
+            let lit_expr = csharp_literal(lit, &full_typ);
+            wln!(writer, "{full_typ} {local_var} = {lit_expr};");
+            return;
+        }
 
         let mut decode_ti = field.type_info.clone();
         if field.is_dict && !decode_ti.is_dict {

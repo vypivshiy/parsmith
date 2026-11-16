@@ -4,8 +4,8 @@
 use crate::ast::{BaseType, JsonDef, JsonFieldDef, Module, TypeInfo};
 use crate::codegen::builder::ModuleBuilder;
 use crate::codegen::elixir::{
-    ElixirEmitter, elixir_field_name, elixir_key_type, elixir_pascal, elixir_str, emit_elixir_doc,
-    format_elixir_module_prefix,
+    ElixirEmitter, elixir_field_name, elixir_key_type, elixir_literal, elixir_pascal, elixir_str,
+    emit_elixir_doc, format_elixir_module_prefix,
 };
 use crate::codegen::writer::{CodeWriter, wln};
 
@@ -239,7 +239,12 @@ impl ElixirEmitter {
             return;
         }
 
-        wln!(writer, "obj = Rt.expect_object!(value, {schema_lit})");
+        let uses_obj = active_fields.iter().any(|f| f.value.is_none());
+        if uses_obj {
+            wln!(writer, "obj = Rt.expect_object!(value, {schema_lit})");
+        } else {
+            wln!(writer, "_ = Rt.expect_object!(value, {schema_lit})");
+        }
         for field in active_fields {
             self.emit_json_field_decode(field, schema_name, module, writer);
         }
@@ -269,6 +274,10 @@ impl ElixirEmitter {
         let info = &field.type_info;
         let f_name = elixir_field_name(&field.name);
         let var_name = format!("f_{f_name}");
+        if let Some(ref lit) = field.value {
+            wln!(writer, "{var_name} = {}", elixir_literal(lit));
+            return;
+        }
         let wire = field.alias.as_deref().unwrap_or(&field.name);
         let optional = field.is_optional || field.omitempty || info.is_optional || info.omitempty;
         let path_lit = elixir_str(wire);

@@ -342,6 +342,65 @@ fn write_if_changed(path: impl AsRef<std::path::Path>, content: &str) {
     fs::write(path, content).unwrap();
 }
 
+const SCHEMA_VALUE_AND_AUTOCAST: &str = r#"
+define SOURCE="habr"
+
+struct FeedCard {
+    @init {
+        seed_ver int value=1
+        seed_tag str value="{{SOURCE}}" { upper }
+    }
+
+    source str value="{{SOURCE}}"
+    kind value="article"
+    version int value=2
+    ratio float value=1.5
+    is_live bool value=#false
+    seeded str value="{{SOURCE}}" { upper }
+    from_init str { @seed_tag }
+    views int { css ".views"; text; fallback 0 }
+    score float { css ".score"; text; fallback 0.0 }
+    has_badge bool { css ".badge" }
+    tags (array)int { css-all ".tag"; text }
+}
+
+json ReleaseCard {
+    source str value="{{SOURCE}}"
+    version int value=1
+    ratio float value=2.5
+    is_live bool value=#true
+    id str from="node_id"
+}
+"#;
+
+#[test]
+fn kotlin_value_constants_and_postfix_autocast() {
+    let opts = CodegenOptions::new(Target::Kotlin);
+    let res = generate_source(SCHEMA_VALUE_AND_AUTOCAST, Some("value_cast.kdl"), &opts);
+    assert!(!res.has_errors(), "{:?}", res.diagnostics);
+    let code = res.primary_code().unwrap();
+
+    // StepOp::Value in @init and struct fields
+    assert!(code.contains("val v1 = 1L"));
+    assert!(code.contains("val v1 = \"habr\""));
+    assert!(code.contains("val v1 = \"article\""));
+    assert!(code.contains("val v1 = 2L"));
+    assert!(code.contains("val v1 = 1.5"));
+    assert!(code.contains("val v1 = false"));
+    assert!(code.contains("val v2 = Rt.upper(v1)"));
+
+    // Postfix auto-cast in struct fields
+    assert!(code.contains("Rt.toInt("));
+    assert!(code.contains("Rt.toFloat("));
+    assert!(code.contains("Rt.nodeBool("));
+
+    // JsonFieldDef.value in json projector
+    assert!(code.contains("val source: String = \"habr\""));
+    assert!(code.contains("val version: Long = 1L"));
+    assert!(code.contains("val ratio: Double = 2.5"));
+    assert!(code.contains("val isLive: Boolean = true"));
+}
+
 #[test]
 fn kotlin_toolchain_check_and_execution() {
     let gradle_cmd = if cfg!(windows) {
@@ -400,6 +459,7 @@ tasks.test {
         ("sep_json", SCHEMA_CATALOG_JSON_PROJECTORS),
         ("sep_fetch", SCHEMA_HTML_FETCH_REQUESTS),
         ("sep_rest", SCHEMA_REST_CLIENT),
+        ("sep_value_cast", SCHEMA_VALUE_AND_AUTOCAST),
     ];
 
     let mut all_rt_builder = ModuleBuilder::new();
@@ -682,6 +742,28 @@ class ParsmithKotlinGeneratedTest {
         assertFailsWith<sep.Rt.RtError> {
             sep.GeoLocationJson.fromJson("""{"lat": "bad", "lng": 1.0}""")
         }
+
+        // Value constants and postfix auto-cast
+        val vcHtml = """<div><span class="views">42</span><span class="score">9.5</span><span class="badge">ok</span><span class="tag">10</span><span class="tag">20</span></div>"""
+        val vcRes = sep.FeedCard(vcHtml).parse()
+        assertEquals("habr", vcRes.source)
+        assertEquals("article", vcRes.kind)
+        assertEquals(2L, vcRes.version)
+        assertEquals(1.5, vcRes.ratio)
+        assertFalse(vcRes.isLive)
+        assertEquals("HABR", vcRes.seeded)
+        assertEquals("HABR", vcRes.fromInit)
+        assertEquals(42L, vcRes.views)
+        assertEquals(9.5, vcRes.score)
+        assertTrue(vcRes.hasBadge)
+        assertEquals(listOf(10L, 20L), vcRes.tags)
+
+        val rcRes = sep.ReleaseCardJson.fromJson("""{"node_id":"rel-1"}""")
+        assertEquals("habr", rcRes.source)
+        assertEquals(1L, rcRes.version)
+        assertEquals(2.5, rcRes.ratio)
+        assertTrue(rcRes.isLive)
+        assertEquals("rel-1", rcRes.id)
     }
 
     @Test

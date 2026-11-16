@@ -277,6 +277,64 @@ fn php_target_parsing_helpers_and_two_pass_dry_run_zero_allocation() {
     assert!(emitted.contains("// epilogue"));
 }
 
+const SCHEMA_VALUE_AND_AUTOCAST: &str = r#"
+define SOURCE="habr"
+
+struct FeedCard {
+    @init {
+        seed_ver int value=1
+        seed_tag str value="{{SOURCE}}" { upper }
+    }
+
+    source str value="{{SOURCE}}"
+    kind value="article"
+    version int value=2
+    ratio float value=1.5
+    is_live bool value=#false
+    seeded str value="{{SOURCE}}" { upper }
+    from_init str { @seed_tag }
+    views int { css ".views"; text; fallback 0 }
+    score float { css ".score"; text; fallback 0.0 }
+    has_badge bool { css ".badge" }
+    tags (array)int { css-all ".tag"; text }
+}
+
+json ReleaseCard {
+    source str value="{{SOURCE}}"
+    version int value=1
+    ratio float value=2.5
+    is_live bool value=#true
+    id str from="node_id"
+}
+"#;
+
+#[test]
+fn php_value_constants_and_postfix_autocast() {
+    let opts = CodegenOptions::new(Target::Php);
+    let res = generate_source(SCHEMA_VALUE_AND_AUTOCAST, Some("value_cast.kdl"), &opts);
+    assert!(!res.has_errors(), "{:?}", res.diagnostics);
+    let code = res.primary_code().unwrap();
+
+    // StepOp::Value in @init and struct fields
+    assert!(code.contains("$v1 = 1;"));
+    assert!(code.contains("$v1 = 'habr';"));
+    assert!(code.contains("$v1 = 'article';"));
+    assert!(code.contains("$v1 = 2;"));
+    assert!(code.contains("$v1 = 1.5;"));
+    assert!(code.contains("$v1 = false;"));
+    assert!(code.contains("$v2 = Rt::upper($v1);"));
+
+    // Postfix auto-cast in struct fields
+    assert!(code.contains("Rt::toInt("));
+    assert!(code.contains("Rt::toFloat("));
+
+    // JsonFieldDef.value in json projector
+    assert!(code.contains("$_f_source = 'habr';"));
+    assert!(code.contains("$_f_version = 1;"));
+    assert!(code.contains("$_f_ratio = 2.5;"));
+    assert!(code.contains("$_f_is_live = true;"));
+}
+
 #[test]
 fn php_toolchain_lint_and_execution() {
     let tmp = TempTestDir::new("php_toolchain");
@@ -296,6 +354,7 @@ fn php_toolchain_lint_and_execution() {
         ("s_json", SCHEMA_JSON_PROJECTORS),
         ("s_fetch", SCHEMA_HTML_FETCH_REQUESTS),
         ("s_rest", SCHEMA_REST_CLIENT),
+        ("s_value_cast", SCHEMA_VALUE_AND_AUTOCAST),
     ];
 
     let check_php_syntax = |file_path: &std::path::Path| {
@@ -627,6 +686,7 @@ require_once __DIR__ . '/inline_s_xpath_native.php';
 require_once __DIR__ . '/inline_s_xpath_crawler.php';
 require_once __DIR__ . '/inline_s_ext_native.php';
 require_once __DIR__ . '/inline_s_json_native.php';
+require_once __DIR__ . '/inline_s_value_cast_native.php';
 require_once __DIR__ . '/full_suite.php';
 require_once __DIR__ . '/live_fetch.php';
 require_once __DIR__ . '/live_rest.php';
@@ -793,6 +853,28 @@ $mpSerialized = json_decode((string) json_encode($mp->manifest), true);
 assert_eq(array_key_exists('legacy_id', $mpSerialized), false, '@omitempty legacy_id omitted');
 assert_eq(array_key_exists('opt_count', $mpSerialized), true, 'nullable opt_count present');
 assert_eq($mpSerialized['opt_count'], null, 'nullable opt_count is null');
+
+// 7b. Value constants and postfix auto-cast
+$vcHtml = '<div><span class="views">42</span><span class="score">9.5</span><span class="badge">ok</span><span class="tag">10</span><span class="tag">20</span></div>';
+$vcRes = (new \TestNs\SValueCast_Native\FeedCard($vcHtml))->parse();
+assert_eq($vcRes->source, 'habr', 'FeedCard.source');
+assert_eq($vcRes->kind, 'article', 'FeedCard.kind');
+assert_eq($vcRes->version, 2, 'FeedCard.version');
+assert_eq($vcRes->ratio, 1.5, 'FeedCard.ratio');
+assert_eq($vcRes->is_live, false, 'FeedCard.is_live');
+assert_eq($vcRes->seeded, 'HABR', 'FeedCard.seeded');
+assert_eq($vcRes->from_init, 'HABR', 'FeedCard.from_init');
+assert_eq($vcRes->views, 42, 'FeedCard.views');
+assert_eq($vcRes->score, 9.5, 'FeedCard.score');
+assert_eq($vcRes->has_badge, true, 'FeedCard.has_badge');
+assert_eq($vcRes->tags, [10, 20], 'FeedCard.tags');
+
+$rcRes = \TestNs\SValueCast_Native\ReleaseCardJson::fromValue(['node_id' => 'rel-1']);
+assert_eq($rcRes->source, 'habr', 'ReleaseCardJson.source');
+assert_eq($rcRes->version, 1, 'ReleaseCardJson.version');
+assert_eq($rcRes->ratio, 2.5, 'ReleaseCardJson.ratio');
+assert_eq($rcRes->is_live, true, 'ReleaseCardJson.is_live');
+assert_eq($rcRes->id, 'rel-1', 'ReleaseCardJson.id');
 
 // 8. Live HTTP @request fetch and (rest)struct endpoints
 $tx = \LiveFetch\Rt::viaStream(5.0);

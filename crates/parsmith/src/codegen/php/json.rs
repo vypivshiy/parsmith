@@ -4,7 +4,7 @@
 use crate::ast::{BaseType, JsonDef, JsonFieldDef, Module, TypeInfo};
 use crate::codegen::builder::ModuleBuilder;
 use crate::codegen::php::dom::PhpDomSpelling;
-use crate::codegen::php::{PhpEmitter, emit_php_doc, php_ident, php_pascal, php_str};
+use crate::codegen::php::{PhpEmitter, emit_php_doc, php_ident, php_literal, php_pascal, php_str};
 use crate::codegen::writer::{CodeWriter, wln};
 use crate::linter::symbols::to_snake_case;
 
@@ -354,6 +354,10 @@ impl<D: PhpDomSpelling> PhpEmitter<D> {
 
         for field in &active_fields {
             let f_ident = php_ident(&field.name);
+            if let Some(ref lit) = field.value {
+                wln!(writer, "$_f_{f_ident} = {};", php_literal(lit));
+                continue;
+            }
             let wire_path = field.alias.as_deref().unwrap_or(&field.name);
             let target = format!("{schema_name}.{}", field.name);
             let target_lit = php_str(&target);

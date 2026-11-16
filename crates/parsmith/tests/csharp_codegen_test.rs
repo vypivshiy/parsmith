@@ -441,6 +441,65 @@ fn csharp_target_parsing_and_two_pass_dry_run_zero_allocation() {
     assert!(emitted.contains("// epilogue"));
 }
 
+const SCHEMA_VALUE_AND_AUTOCAST: &str = r#"
+define SOURCE="habr"
+
+struct FeedCard {
+    @init {
+        seed_ver int value=1
+        seed_tag str value="{{SOURCE}}" { upper }
+    }
+
+    source str value="{{SOURCE}}"
+    kind value="article"
+    version int value=2
+    ratio float value=1.5
+    is_live bool value=#false
+    seeded str value="{{SOURCE}}" { upper }
+    from_init str { @seed_tag }
+    views int { css ".views"; text; fallback 0 }
+    score float { css ".score"; text; fallback 0.0 }
+    has_badge bool { css ".badge" }
+    tags (array)int { css-all ".tag"; text }
+}
+
+json ReleaseCard {
+    source str value="{{SOURCE}}"
+    version int value=1
+    ratio float value=2.5
+    is_live bool value=#true
+    id str from="node_id"
+}
+"#;
+
+#[test]
+fn csharp_value_constants_and_postfix_autocast() {
+    let opts = CodegenOptions::new(Target::CSharp);
+    let res = generate_source(SCHEMA_VALUE_AND_AUTOCAST, Some("value_cast.kdl"), &opts);
+    assert!(!res.has_errors(), "{:?}", res.diagnostics);
+    let code = res.primary_code().unwrap();
+
+    // StepOp::Value in @init and struct fields
+    assert!(code.contains("var v1 = 1L;"));
+    assert!(code.contains("var v1 = \"habr\";"));
+    assert!(code.contains("var v1 = \"article\";"));
+    assert!(code.contains("var v1 = 2L;"));
+    assert!(code.contains("var v1 = 1.5;"));
+    assert!(code.contains("var v1 = false;"));
+    assert!(code.contains("var v2 = Rt.Upper(v1);"));
+
+    // Postfix auto-cast in struct fields
+    assert!(code.contains("Rt.ToInt("));
+    assert!(code.contains("Rt.ToFloat("));
+    assert!(code.contains("Rt.NodeBool("));
+
+    // JsonFieldDef.value in json projector
+    assert!(code.contains("string _f_source = \"habr\";"));
+    assert!(code.contains("long _f_version = 1L;"));
+    assert!(code.contains("double _f_ratio = 2.5;"));
+    assert!(code.contains("bool _f_is_live = true;"));
+}
+
 #[test]
 fn csharp_toolchain_check_and_execution() {
     let tmp = TempTestDir::new("csharp_toolchain");
@@ -471,6 +530,7 @@ fn csharp_toolchain_check_and_execution() {
         ("SepJson", SCHEMA_CATALOG_JSON_PROJECTORS),
         ("SepFetch", SCHEMA_HTML_FETCH_REQUESTS),
         ("SepRest", SCHEMA_REST_CLIENT),
+        ("SepValueCast", SCHEMA_VALUE_AND_AUTOCAST),
     ];
 
     // 1. Emit each schema in inline runtime mode (in namespace `Inline<Idx>`) and separate runtime mode (in namespace `<SepName>` with shared `SepRt`)
@@ -758,6 +818,28 @@ public static class Program
         bool threwBadType = false;
         try { SepJson.GeoLocationJson.FromJson(@"{""lat"": ""bad"", ""lng"": 1.0}"); } catch (SepJson.Rt.RtJsonSchemaError) { threwBadType = true; }
         Assert(threwBadType, "expected RtJsonSchemaError on bad field type");
+
+        // 3b. Value constants and postfix auto-cast
+        var vcHtml = @"<div><span class=""views"">42</span><span class=""score"">9.5</span><span class=""badge"">ok</span><span class=""tag"">10</span><span class=""tag"">20</span></div>";
+        var vcRes = new SepValueCast.FeedCard(vcHtml).Parse();
+        Assert(vcRes.Source == "habr", vcRes.Source);
+        Assert(vcRes.Kind == "article", vcRes.Kind);
+        Assert(vcRes.Version == 2L, $"vcRes.Version={vcRes.Version}");
+        Assert(Math.Abs(vcRes.Ratio - 1.5) < 1e-9, $"vcRes.Ratio={vcRes.Ratio}");
+        Assert(!vcRes.IsLive, "vcRes.IsLive");
+        Assert(vcRes.Seeded == "HABR", vcRes.Seeded);
+        Assert(vcRes.FromInit == "HABR", vcRes.FromInit);
+        Assert(vcRes.Views == 42L, $"vcRes.Views={vcRes.Views}");
+        Assert(Math.Abs(vcRes.Score - 9.5) < 1e-9, $"vcRes.Score={vcRes.Score}");
+        Assert(vcRes.HasBadge, "vcRes.HasBadge");
+        Assert(string.Join(",", vcRes.Tags) == "10,20", string.Join(",", vcRes.Tags));
+
+        var rcRes = SepValueCast.ReleaseCardJson.FromJson(@"{""node_id"":""rel-1""}");
+        Assert(rcRes.Source == "habr", rcRes.Source);
+        Assert(rcRes.Version == 1L, $"rcRes.Version={rcRes.Version}");
+        Assert(Math.Abs(rcRes.Ratio - 2.5) < 1e-9, $"rcRes.Ratio={rcRes.Ratio}");
+        Assert(rcRes.IsLive, "rcRes.IsLive");
+        Assert(rcRes.Id == "rel-1", rcRes.Id);
 
         // 4. Live Loopback HTTP Fetch and REST Client tests
         var listener = new TcpListener(IPAddress.Loopback, 0);
