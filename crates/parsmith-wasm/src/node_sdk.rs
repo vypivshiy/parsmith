@@ -5,9 +5,10 @@ use std::collections::BTreeMap;
 use parsmith::{
     CheckOptions, CheckResult, CodegenOptions, Diagnostic, ErrorConditionValue, GenerateResult,
     MemorySourceLoader, ModuleInfo, PlaceholderSpec, RestEndpointDecl, TypeInfo,
-    check_source_with_loader_and_targets, check_source_with_options, check_source_with_targets,
-    check_with_loader_and_targets, check_with_options, generate_source,
-    generate_source_with_loader, generate_with_loader, inspect_module,
+    check_entries_with_loader_and_targets, check_source_with_loader_and_targets,
+    check_source_with_options, check_source_with_targets, check_with_loader_and_targets,
+    check_with_options, generate_entries_with_loader, generate_source, generate_source_with_loader,
+    generate_with_loader, inspect_module,
 };
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use wasm_bindgen::prelude::*;
@@ -552,17 +553,33 @@ pub fn sdk_check(
         _ => None,
     };
 
-    let res = match (is_path, vfs_loader) {
-        (true, Some(loader)) => check_with_loader_and_targets(entry_or_source, &loader, targets),
-        (false, Some(loader)) => {
+    let multi_entries: Option<Vec<String>> =
+        if is_path && entry_or_source.trim_start().starts_with('[') {
+            serde_json::from_str(entry_or_source).ok()
+        } else {
+            None
+        };
+
+    let res = match (is_path, multi_entries, vfs_loader) {
+        (true, Some(entries), Some(loader)) => {
+            check_entries_with_loader_and_targets(&entries, &loader, targets)
+        }
+        (true, Some(entries), None) => {
+            let empty_loader = MemorySourceLoader::new();
+            check_entries_with_loader_and_targets(&entries, &empty_loader, targets)
+        }
+        (true, None, Some(loader)) => {
+            check_with_loader_and_targets(entry_or_source, &loader, targets)
+        }
+        (false, _, Some(loader)) => {
             let lp = logical_path.as_deref().unwrap_or("<memory>.kdl");
             check_source_with_loader_and_targets(entry_or_source, Some(lp), &loader, targets)
         }
-        (true, None) => {
+        (true, None, None) => {
             let empty_loader = MemorySourceLoader::new();
             check_with_loader_and_targets(entry_or_source, &empty_loader, targets)
         }
-        (false, None) => {
+        (false, _, None) => {
             check_source_with_targets(entry_or_source, logical_path.as_deref(), targets)
         }
     };
@@ -583,17 +600,31 @@ pub fn sdk_generate(
     let opts: CodegenOptions =
         serde_json::from_str(options_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-    let res = match (is_path, vfs_loader) {
-        (true, Some(loader)) => generate_with_loader(entry_or_source, &loader, &opts),
-        (false, Some(loader)) => {
+    let multi_entries: Option<Vec<String>> =
+        if is_path && entry_or_source.trim_start().starts_with('[') {
+            serde_json::from_str(entry_or_source).ok()
+        } else {
+            None
+        };
+
+    let res = match (is_path, multi_entries, vfs_loader) {
+        (true, Some(entries), Some(loader)) => {
+            generate_entries_with_loader(&entries, &loader, &opts)
+        }
+        (true, Some(entries), None) => {
+            let empty_loader = MemorySourceLoader::new();
+            generate_entries_with_loader(&entries, &empty_loader, &opts)
+        }
+        (true, None, Some(loader)) => generate_with_loader(entry_or_source, &loader, &opts),
+        (false, _, Some(loader)) => {
             let lp = logical_path.as_deref().unwrap_or("<memory>.kdl");
             generate_source_with_loader(entry_or_source, Some(lp), &loader, &opts)
         }
-        (true, None) => {
+        (true, None, None) => {
             let empty_loader = MemorySourceLoader::new();
             generate_with_loader(entry_or_source, &empty_loader, &opts)
         }
-        (false, None) => generate_source(entry_or_source, logical_path.as_deref(), &opts),
+        (false, _, None) => generate_source(entry_or_source, logical_path.as_deref(), &opts),
     };
 
     Ok(serialize_generate_result(&res))

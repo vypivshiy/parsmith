@@ -284,6 +284,20 @@ class CheckResult {
   }
 }
 
+function applyTargetWithDefaultRuntime(opts, parsedTarget, keepRuntimeName) {
+  if (!keepRuntimeName) {
+    if (parsedTarget === "python" && opts.runtime_name === "parsmith_runtime") {
+      opts.runtime_name = ".parsmith_runtime";
+    } else if (
+      parsedTarget !== "python" &&
+      opts.runtime_name === ".parsmith_runtime"
+    ) {
+      opts.runtime_name = "parsmith_runtime";
+    }
+  }
+  opts.target = parsedTarget;
+}
+
 class CodegenOptions {
   constructor(targetOrOptions, options) {
     const parsed = parseCodegenArgs(targetOrOptions, options, false);
@@ -294,15 +308,7 @@ class CodegenOptions {
   }
   set target(val) {
     const [t, pyLib, phpLib] = parseTargetShorthand(val);
-    if (t === "python" && this._inner.runtime_name === "parsmith_runtime") {
-      this._inner.runtime_name = ".parsmith_runtime";
-    } else if (
-      t !== "python" &&
-      this._inner.runtime_name === ".parsmith_runtime"
-    ) {
-      this._inner.runtime_name = "parsmith_runtime";
-    }
-    this._inner.target = t;
+    applyTargetWithDefaultRuntime(this._inner, t, false);
     if (pyLib) this._inner.html_lib = pyLib;
     if (phpLib) this._inner.php_html_lib = phpLib;
   }
@@ -1297,20 +1303,11 @@ function applyOptionsFromObject(obj, state, allowCallContextKeys) {
         const s = extractReqString(v, "target");
         const [parsedTarget, shorthandPyLib, shorthandPhpLib] =
           parseTargetShorthand(s);
-        if (!state.optionsHadRuntimeName) {
-          if (
-            parsedTarget === "python" &&
-            state.opts.runtime_name === "parsmith_runtime"
-          ) {
-            state.opts.runtime_name = ".parsmith_runtime";
-          } else if (
-            parsedTarget !== "python" &&
-            state.opts.runtime_name === ".parsmith_runtime"
-          ) {
-            state.opts.runtime_name = "parsmith_runtime";
-          }
-        }
-        state.opts.target = parsedTarget;
+        applyTargetWithDefaultRuntime(
+          state.opts,
+          parsedTarget,
+          state.optionsHadRuntimeName
+        );
         if (shorthandPyLib && !state.optionsHadHtmlLib) {
           state.opts.html_lib = shorthandPyLib;
         }
@@ -1470,20 +1467,11 @@ function parseCodegenArgs(targetOrOptions, options, allowCallContextKeys) {
   if (explicitTarget !== null) {
     const [parsedTarget, shorthandPyLib, shorthandPhpLib] =
       parseTargetShorthand(explicitTarget);
-    if (!state.optionsHadRuntimeName) {
-      if (
-        parsedTarget === "python" &&
-        state.opts.runtime_name === "parsmith_runtime"
-      ) {
-        state.opts.runtime_name = ".parsmith_runtime";
-      } else if (
-        parsedTarget !== "python" &&
-        state.opts.runtime_name === ".parsmith_runtime"
-      ) {
-        state.opts.runtime_name = "parsmith_runtime";
-      }
-    }
-    state.opts.target = parsedTarget;
+    applyTargetWithDefaultRuntime(
+      state.opts,
+      parsedTarget,
+      state.optionsHadRuntimeName
+    );
     if (shorthandPyLib && !state.optionsHadHtmlLib) {
       state.opts.html_lib = shorthandPyLib;
     }
@@ -1511,8 +1499,86 @@ function version() {
   return wasm.version();
 }
 
-function check(sourceOrPath, options) {
+function expandDiskInputPaths(rawPaths, skipUnderscoreInDirs) {
+  const expanded = [];
+  for (const p of rawPaths) {
+    if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
+      const entries = fs
+        .readdirSync(p)
+        .filter((name) => {
+          if (!name.toLowerCase().endsWith(".kdl")) return false;
+          if (skipUnderscoreInDirs && name.startsWith("_")) return false;
+          const full = path.join(p, name);
+          return fs.existsSync(full) && fs.statSync(full).isFile();
+        })
+        .sort();
+      for (const name of entries) {
+        expanded.push(path.join(p, name));
+      }
+    } else {
+      expanded.push(p);
+    }
+  }
+  return expanded;
+}
+
+function resolveBatchOrSingleInput(sourceOrPath, vfsMap, skipUnderscoreInDirs) {
+  if (Array.isArray(sourceOrPath)) {
+    const rawPaths = sourceOrPath.map((item) => {
+      try {
+        return extractRawSourceOrPath(item)[0];
+      } catch {
+        throw new TypeError(
+          "array elements for sourceOrPath must be string or file: URL"
+        );
+      }
+    });
+    const expanded = vfsMap
+      ? rawPaths
+      : expandDiskInputPaths(rawPaths, skipUnderscoreInDirs);
+    if (!vfsMap) {
+      const merged = {};
+      for (const ep of expanded) {
+        const sub = collectDiskSourcesForEntry(ep);
+        if (sub) Object.assign(merged, sub);
+      }
+      vfsMap = Object.keys(merged).length > 0 ? merged : null;
+    }
+    return {
+      isPath: true,
+      strVal: JSON.stringify(expanded),
+      vfsMap,
+    };
+  }
+
   const [rawStr, isPathlike] = extractRawSourceOrPath(sourceOrPath);
+  if (
+    !vfsMap &&
+    fs.existsSync(rawStr) &&
+    fs.statSync(rawStr).isDirectory()
+  ) {
+    const expanded = expandDiskInputPaths([rawStr], skipUnderscoreInDirs);
+    const merged = {};
+    for (const ep of expanded) {
+      const sub = collectDiskSourcesForEntry(ep);
+      if (sub) Object.assign(merged, sub);
+    }
+    return {
+      isPath: true,
+      strVal: JSON.stringify(expanded),
+      vfsMap: Object.keys(merged).length > 0 ? merged : null,
+    };
+  }
+
+  const [mode, strVal] = resolveInputMode(rawStr, isPathlike, vfsMap);
+  const isPath = mode === "path";
+  if (isPath && !vfsMap) {
+    vfsMap = collectDiskSourcesForEntry(strVal);
+  }
+  return { isPath, strVal, vfsMap };
+}
+
+function check(sourceOrPath, options) {
   let vfsMap = null;
   let targetsVec = null;
   let logicalPath = null;
@@ -1536,35 +1602,29 @@ function check(sourceOrPath, options) {
     }
   }
 
-  const [mode, strVal] = resolveInputMode(rawStr, isPathlike, vfsMap);
-  const isPath = mode === "path";
-  if (isPath && !vfsMap) {
-    vfsMap = collectDiskSourcesForEntry(strVal);
-  }
+  const resolved = resolveBatchOrSingleInput(sourceOrPath, vfsMap, false);
   const rawJson = wasm.sdk_check(
-    strVal,
-    isPath,
+    resolved.strVal,
+    resolved.isPath,
     logicalPath ?? undefined,
-    vfsMap ? JSON.stringify(vfsMap) : undefined,
+    resolved.vfsMap ? JSON.stringify(resolved.vfsMap) : undefined,
     targetsVec ? JSON.stringify(targetsVec) : undefined
   );
   return new CheckResult(JSON.parse(rawJson));
 }
 
 function generate(sourceOrPath, targetOrOptions, options) {
-  const [rawStr, isPathlike] = extractRawSourceOrPath(sourceOrPath);
   const parsed = parseCodegenArgs(targetOrOptions, options, true);
-  let vfsMap = parsed.vfsMap;
-  const [mode, strVal] = resolveInputMode(rawStr, isPathlike, vfsMap);
-  const isPath = mode === "path";
-  if (isPath && !vfsMap) {
-    vfsMap = collectDiskSourcesForEntry(strVal);
-  }
+  const resolved = resolveBatchOrSingleInput(
+    sourceOrPath,
+    parsed.vfsMap,
+    true
+  );
   const rawJson = wasm.sdk_generate(
-    strVal,
-    isPath,
+    resolved.strVal,
+    resolved.isPath,
     parsed.logicalPath ?? undefined,
-    vfsMap ? JSON.stringify(vfsMap) : undefined,
+    resolved.vfsMap ? JSON.stringify(resolved.vfsMap) : undefined,
     JSON.stringify(parsed.opts)
   );
   return new GenerateResult(JSON.parse(rawJson));

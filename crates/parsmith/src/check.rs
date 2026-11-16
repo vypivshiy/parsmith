@@ -103,13 +103,56 @@ where
 {
     let (expanded_paths, mut all_diagnostics) = expand_kdl_input_paths(paths, false);
     let loader = FsSourceLoader::new();
+    let entry_strs: Vec<String> = expanded_paths
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    let mut res = check_entries_with_options(&entry_strs, &loader, options);
+    for diag in res.diagnostics {
+        if !all_diagnostics.contains(&diag) {
+            all_diagnostics.push(diag);
+        }
+    }
+    res.diagnostics = all_diagnostics;
+    res
+}
+
+/// Validates multiple logical entry paths through `loader` with an optional target ecosystem filter.
+pub fn check_entries_with_loader_and_targets<I, E, T, S>(
+    entries: I,
+    loader: &dyn SourceLoader,
+    targets: Option<T>,
+) -> CheckResult
+where
+    I: IntoIterator<Item = E>,
+    E: AsRef<str>,
+    T: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let opts = match targets {
+        Some(iter) => CheckOptions::new().with_targets(iter),
+        None => CheckOptions::default(),
+    };
+    check_entries_with_options(entries, loader, &opts)
+}
+
+/// Validates multiple logical entry paths through `loader` with `options`.
+pub fn check_entries_with_options<I, E>(
+    entries: I,
+    loader: &dyn SourceLoader,
+    options: &CheckOptions,
+) -> CheckResult
+where
+    I: IntoIterator<Item = E>,
+    E: AsRef<str>,
+{
+    let mut all_diagnostics = Vec::new();
     let mut all_sources = BTreeMap::new();
     let mut last_program = None;
     let mut last_module = None;
 
-    for file_path in &expanded_paths {
-        let entry_str = file_path.to_string_lossy();
-        let res = check_with_options(&entry_str, &loader, options);
+    for entry in entries {
+        let res = check_with_options(entry.as_ref(), loader, options);
         for (k, v) in res.sources {
             all_sources.insert(k, v);
         }

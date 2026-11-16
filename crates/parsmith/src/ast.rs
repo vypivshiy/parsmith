@@ -1311,6 +1311,23 @@ impl Module {
         !self.structs.is_empty() || !self.functions.is_empty() || !self.json_defs.is_empty()
     }
 
+    /// Merges runtime capability declarations (`structs`, `functions`, `extensions`, and
+    /// deduplicated `json_defs`) from `other` into `self` for two-pass shared runtime emission.
+    pub fn merge_runtime_from(&mut self, other: &Self) {
+        self.structs.extend(other.structs.iter().cloned());
+        self.functions.extend(other.functions.iter().cloned());
+        self.extensions.extend(other.extensions.iter().cloned());
+        for jd in &other.json_defs {
+            if !self
+                .json_defs
+                .iter()
+                .any(|existing| existing.name == jd.name)
+            {
+                self.json_defs.push(jd.clone());
+            }
+        }
+    }
+
     /// Resolves the effective result union type alias name for `alias_name` on `struct_name`,
     /// prefixing with `to_pascal_case(struct_name)` if multiple `(rest)struct`s in the module
     /// synthesize a result alias with the same `alias_name`.

@@ -718,7 +718,7 @@ pub fn generate_path(path: impl AsRef<Path>, options: &CodegenOptions) -> Genera
 ///
 /// - Directories are scanned flat (`*.kdl`, skipping `_*.kdl` helper files) in lexicographical order.
 /// - In batch/folder mode, helper-only modules (`!module.is_emittable()`) are validated through all
-///   5 compiler passes without emitting empty parser files.
+///   5 validation passes without emitting empty parser files.
 /// - When `options.separate_runtime` is `true`, uses two-pass batch runtime aggregation to emit a
 ///   single unified `<runtime_name>.<ext>` shared runtime covering all compiled modules in the batch.
 pub fn generate_paths<I, P>(paths: I, options: &CodegenOptions) -> GenerateResult
@@ -736,15 +736,54 @@ where
         return generate_with_loader(&raw_paths[0].to_string_lossy(), &loader, options);
     }
 
-    let (expanded_paths, mut all_diagnostics) = expand_kdl_input_paths(&raw_paths, true);
+    let (expanded_paths, initial_diagnostics) = expand_kdl_input_paths(&raw_paths, true);
     let loader = FsSourceLoader::new();
+    let entry_strs: Vec<String> = expanded_paths
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    generate_batch_with_loader(&entry_strs, initial_diagnostics, &loader, options)
+}
+
+/// Compiles and generates target code for multiple logical entry paths using `loader` with
+/// two-pass shared runtime aggregation.
+pub fn generate_entries_with_loader<I, E>(
+    entries: I,
+    loader: &dyn SourceLoader,
+    options: &CodegenOptions,
+) -> GenerateResult
+where
+    I: IntoIterator<Item = E>,
+    E: AsRef<str>,
+{
+    let entry_strs: Vec<String> = entries.into_iter().map(|e| e.as_ref().to_owned()).collect();
+    if entry_strs.len() == 1 {
+        return generate_with_loader(&entry_strs[0], loader, options);
+    }
+    let initial_diagnostics = if entry_strs.is_empty() {
+        vec![Diagnostic::error(
+            DiagnosticCode::E003,
+            "no input paths provided",
+            Span::EMPTY,
+        )]
+    } else {
+        Vec::new()
+    };
+    generate_batch_with_loader(&entry_strs, initial_diagnostics, loader, options)
+}
+
+fn generate_batch_with_loader(
+    entry_strs: &[String],
+    mut all_diagnostics: Vec<Diagnostic>,
+    loader: &dyn SourceLoader,
+    options: &CodegenOptions,
+) -> GenerateResult {
     let check_opts = CheckOptions::new().with_targets([options.target.ecosystem_name()]);
     let mut all_sources = BTreeMap::new();
     let mut compiled_modules: Vec<(String, Module)> = Vec::new();
 
-    for file_path in &expanded_paths {
-        let entry_str = file_path.to_string_lossy().into_owned();
-        let mut check_res = check_with_options(&entry_str, &loader, &check_opts);
+    for entry_str in entry_strs {
+        let mut check_res = check_with_options(entry_str, loader, &check_opts);
         for (k, v) in check_res.sources {
             all_sources.insert(k, v);
         }
@@ -754,7 +793,7 @@ where
             }
         }
         if let Some(module) = check_res.module.take() {
-            compiled_modules.push((entry_str, module));
+            compiled_modules.push((entry_str.clone(), module));
         }
     }
 
@@ -806,24 +845,7 @@ where
                         .with_path(module.source_file.clone()),
                 );
             }
-            merged_runtime_module
-                .structs
-                .extend(module.structs.iter().cloned());
-            merged_runtime_module
-                .functions
-                .extend(module.functions.iter().cloned());
-            merged_runtime_module
-                .extensions
-                .extend(module.extensions.iter().cloned());
-            for jd in &module.json_defs {
-                if !merged_runtime_module
-                    .json_defs
-                    .iter()
-                    .any(|existing| existing.name == jd.name)
-                {
-                    merged_runtime_module.json_defs.push(jd.clone());
-                }
-            }
+            merged_runtime_module.merge_runtime_from(module);
         }
     }
 
@@ -925,6 +947,20 @@ fn finish_generation(
             sources,
         };
     };
+
+    // An explicitly passed `_*.kdl` helper file with no structs/fns/json_defs produces no parser file.
+    let is_underscore_helper = path_hint
+        .or(Some(module.source_file.as_str()))
+        .and_then(|p| Path::new(p).file_name())
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with('_'));
+    if is_underscore_helper && !module.is_emittable() {
+        return GenerateResult {
+            files: IndexMap::new(),
+            diagnostics,
+            sources,
+        };
+    }
 
     let files = emit_files_for_module(&module, path_hint, options, &mut diagnostics);
     GenerateResult {

@@ -10,7 +10,7 @@ parsmith version [-f text|json]
 parsmith json-to-kdl sample.json --name ResponseName -o schema.kdl
 curl -s https://api.example.com/v1/items/42 | parsmith json-to-kdl --name ItemPayload
 
-# 3. Validate schema(s) or directory (5-pass compiler: syntax, imports, selectors, regex, symbols, pipeline types)
+# 3. Validate schema(s) or directory (5-pass validation: syntax, imports, selectors, regex, symbols, pipeline types)
 parsmith check schema.kdl -f json
 parsmith check schemas/ -t py -t rs -t ex
 
