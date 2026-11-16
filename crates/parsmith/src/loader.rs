@@ -3,7 +3,11 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
 
+use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
+
+use crate::diagnostic::{Diagnostic, DiagnosticCode};
+use crate::kdl::Span;
 
 /// A resolved KDL source unit returned by a [`SourceLoader`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -165,6 +169,115 @@ impl SourceLoader for FsSourceLoader {
 
         Ok(LoadedSource::new(normalized_str, content))
     }
+}
+
+/// Expands an iterator of file and/or directory paths into an ordered, deduplicated list of
+/// `.kdl` file paths, along with any `E003` directory discovery diagnostics.
+///
+/// - Directories are scanned flat (`fs::read_dir`) for direct `.kdl` child files (case-insensitive)
+///   and sorted lexicographically by file name.
+/// - When `skip_underscore_in_dirs` is `true` (used by `generate`), files inside directories whose
+///   file name starts with `'_'` (`_*.kdl`) are skipped as root entrypoints.
+/// - If a directory contains no matching `.kdl` files (or cannot be read), a `DiagnosticCode::E003`
+///   error is recorded.
+/// - Canonical paths (`normalize_fs_path`) are deduplicated while preserving first-seen order.
+pub fn expand_kdl_input_paths<I, P>(
+    paths: I,
+    skip_underscore_in_dirs: bool,
+) -> (Vec<PathBuf>, Vec<Diagnostic>)
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+{
+    let raw_paths: Vec<PathBuf> = paths
+        .into_iter()
+        .map(|p| p.as_ref().to_path_buf())
+        .collect();
+    if raw_paths.is_empty() {
+        return (
+            Vec::new(),
+            vec![Diagnostic::error(
+                DiagnosticCode::E003,
+                "no input paths provided",
+                Span::EMPTY,
+            )],
+        );
+    }
+
+    let mut expanded = Vec::new();
+    let mut diagnostics = Vec::new();
+    let mut seen_canonical = IndexSet::new();
+
+    for raw_path in raw_paths {
+        if raw_path.is_dir() {
+            let entries = match std::fs::read_dir(&raw_path) {
+                Ok(rd) => rd,
+                Err(err) => {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            DiagnosticCode::E003,
+                            format!("cannot read directory '{}': {err}", raw_path.display()),
+                            Span::EMPTY,
+                        )
+                        .with_path(raw_path.to_string_lossy().into_owned()),
+                    );
+                    continue;
+                }
+            };
+
+            let mut dir_files = Vec::new();
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                if !entry_path.is_file() {
+                    continue;
+                }
+                let is_kdl = entry_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("kdl"));
+                if !is_kdl {
+                    continue;
+                }
+                if skip_underscore_in_dirs
+                    && entry_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with('_'))
+                {
+                    continue;
+                }
+                dir_files.push(entry_path);
+            }
+
+            dir_files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+
+            if dir_files.is_empty() {
+                diagnostics.push(
+                    Diagnostic::error(
+                        DiagnosticCode::E003,
+                        format!("no .kdl files found in directory '{}'", raw_path.display()),
+                        Span::EMPTY,
+                    )
+                    .with_path(raw_path.to_string_lossy().into_owned()),
+                );
+                continue;
+            }
+
+            for file_path in dir_files {
+                let canon = normalize_fs_path(&file_path);
+                if seen_canonical.insert(canon) {
+                    expanded.push(file_path);
+                }
+            }
+        } else {
+            let canon = normalize_fs_path(&raw_path);
+            if seen_canonical.insert(canon) {
+                expanded.push(raw_path);
+            }
+        }
+    }
+
+    (expanded, diagnostics)
 }
 
 /// Normalizes a filesystem path into a canonical path with Windows verbatim (`\\?\`) prefixes stripped.

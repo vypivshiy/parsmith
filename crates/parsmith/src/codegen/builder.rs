@@ -203,6 +203,32 @@ impl ModuleBuilder {
     pub fn has_runtime(&self) -> bool {
         !self.runtime_defs.is_empty()
     }
+
+    /// Merges imports, standard runtime helpers, and user `extension` helpers from `other`
+    /// into `self`, returning `Err` if `other` contains a conflicting `extension` helper definition.
+    pub fn merge_from(&mut self, other: &ModuleBuilder) -> Result<(), String> {
+        for imp in &other.imports {
+            self.imports.insert(imp.clone());
+        }
+        for imp in &other.std_imports {
+            self.std_imports.insert(imp.clone());
+        }
+        for (name, def) in &other.std_defs {
+            if !self.std_defs.contains_key(name) {
+                for imp in &def.imports {
+                    self.std_imports.insert(imp.clone());
+                }
+                self.std_defs.insert(name.clone(), def.clone());
+            }
+        }
+        for def in other.runtime_defs.values() {
+            self.require_runtime(def.name.clone(), &def.code, def.imports.iter().cloned())?;
+        }
+        for imp in &other.runtime_imports {
+            self.runtime_imports.insert(imp.clone());
+        }
+        Ok(())
+    }
 }
 
 /// Resolves and emits a user `extension` operation step (`StepOp::ExtensionCall`), registering
@@ -346,5 +372,48 @@ mod tests {
             .require_runtime("norm", "def norm(x): return x.strip()", ["import re"])
             .unwrap_err();
         assert!(err.contains("conflicting runtime helper definition: norm"));
+    }
+
+    #[test]
+    fn builder_merge_from_combines_and_detects_conflicts() {
+        let mut b1 = ModuleBuilder::new();
+        b1.require_import("import re")
+            .require_std_with_imports(
+                "rt_fetch",
+                "def rt_fetch(): pass",
+                ["import urllib.request"],
+            )
+            .require_runtime("helper_a", "def helper_a(x): return x", ["import math"])
+            .unwrap();
+
+        let mut b2 = ModuleBuilder::new();
+        b2.require_import("import json")
+            .require_std_with_imports("rt_rest", "def rt_rest(): pass", ["import urllib.error"])
+            .require_runtime("helper_a", "def helper_a(x): return x", ["import math"])
+            .unwrap();
+        b2.require_runtime("helper_b", "def helper_b(x): return x + 1", ["import os"])
+            .unwrap();
+
+        b1.merge_from(&b2).unwrap();
+        assert!(b1.has_std_helper("rt_fetch"));
+        assert!(b1.has_std_helper("rt_rest"));
+        assert!(b1.std_imports().contains("import urllib.request"));
+        assert!(b1.std_imports().contains("import urllib.error"));
+        assert_eq!(
+            b1.runtime_names().collect::<Vec<_>>(),
+            vec!["helper_a", "helper_b"]
+        );
+        assert!(b1.runtime_imports().contains("import math"));
+        assert!(b1.runtime_imports().contains("import os"));
+
+        let mut b3 = ModuleBuilder::new();
+        b3.require_runtime(
+            "helper_a",
+            "def helper_a(x): return x.strip()",
+            ["import math"],
+        )
+        .unwrap();
+        let err = b1.merge_from(&b3).unwrap_err();
+        assert!(err.contains("conflicting runtime helper definition: helper_a"));
     }
 }

@@ -15,7 +15,7 @@ pub mod writer;
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use crate::kdl::Span;
@@ -26,7 +26,7 @@ use crate::ast::{Module, StructKind};
 use crate::check::{CheckOptions, check_source_with_options, check_with_options};
 use crate::diagnostic::{CheckResult, Diagnostic, DiagnosticCode, Severity};
 use crate::linter::symbols::is_valid_symbol;
-use crate::loader::{FsSourceLoader, SourceLoader};
+use crate::loader::{FsSourceLoader, SourceLoader, expand_kdl_input_paths};
 
 pub use builder::{HelperDef, ModuleBuilder, emit_extension_call};
 pub use csharp::{
@@ -88,8 +88,11 @@ pub fn module_has_fetch(module: &Module) -> bool {
         .any(|s| s.kind != StructKind::Rest && !s.requests.is_empty())
 }
 
-/// Default Python shared runtime module name for `-R / --separate-runtime`.
+/// Default shared runtime module name for non-Python targets (`-R / --separate-runtime`).
 pub const DEFAULT_RUNTIME_NAME: &str = "parsmith_runtime";
+
+/// Default Python shared runtime module name (`.parsmith_runtime` -> package-relative `from .parsmith_runtime import ...`).
+pub const DEFAULT_PYTHON_RUNTIME_NAME: &str = ".parsmith_runtime";
 
 /// Code generation target language (`python`, `ts`, `js`, `go`, `rust`, `elixir`, `php`, `csharp`, `kotlin`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -536,7 +539,7 @@ pub struct CodegenOptions {
 }
 
 fn default_runtime_name() -> String {
-    DEFAULT_RUNTIME_NAME.to_owned()
+    DEFAULT_PYTHON_RUNTIME_NAME.to_owned()
 }
 
 fn default_go_package() -> String {
@@ -553,7 +556,7 @@ impl Default for CodegenOptions {
             bs4_parser: Bs4Parser::Lxml,
             http_io: HttpIo::Both,
             separate_runtime: false,
-            runtime_name: DEFAULT_RUNTIME_NAME.to_owned(),
+            runtime_name: DEFAULT_PYTHON_RUNTIME_NAME.to_owned(),
             package: "main".to_owned(),
             module_stem: None,
             prologue: None,
@@ -565,14 +568,25 @@ impl Default for CodegenOptions {
 impl CodegenOptions {
     /// Creates default `CodegenOptions` for `target`.
     pub fn new(target: Target) -> Self {
+        let runtime_name = if target == Target::Python {
+            DEFAULT_PYTHON_RUNTIME_NAME.to_owned()
+        } else {
+            DEFAULT_RUNTIME_NAME.to_owned()
+        };
         Self {
             target,
+            runtime_name,
             ..Self::default()
         }
     }
 
     /// Sets the target language.
     pub fn with_target(mut self, target: Target) -> Self {
+        if target == Target::Python && self.runtime_name == DEFAULT_RUNTIME_NAME {
+            self.runtime_name = DEFAULT_PYTHON_RUNTIME_NAME.to_owned();
+        } else if target != Target::Python && self.runtime_name == DEFAULT_PYTHON_RUNTIME_NAME {
+            self.runtime_name = DEFAULT_RUNTIME_NAME.to_owned();
+        }
         self.target = target;
         self
     }
@@ -689,11 +703,159 @@ impl GenerateResult {
     }
 }
 
-/// Compiles and generates target code for a KDL 2.0 schema file on disk.
+/// Compiles and generates target code for a KDL 2.0 schema file or directory on disk.
 pub fn generate_path(path: impl AsRef<Path>, options: &CodegenOptions) -> GenerateResult {
+    let p = path.as_ref();
+    if p.is_dir() {
+        return generate_paths([p], options);
+    }
     let loader = FsSourceLoader::new();
-    let entry_path = path.as_ref().to_string_lossy();
+    let entry_path = p.to_string_lossy();
     generate_with_loader(&entry_path, &loader, options)
+}
+
+/// Compiles and generates target code for one or more KDL 2.0 schema files and/or directories on disk.
+///
+/// - Directories are scanned flat (`*.kdl`, skipping `_*.kdl` helper files) in lexicographical order.
+/// - In batch/folder mode, helper-only modules (`!module.is_emittable()`) are validated through all
+///   5 compiler passes without emitting empty parser files.
+/// - When `options.separate_runtime` is `true`, uses two-pass batch runtime aggregation to emit a
+///   single unified `<runtime_name>.<ext>` shared runtime covering all compiled modules in the batch.
+pub fn generate_paths<I, P>(paths: I, options: &CodegenOptions) -> GenerateResult
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+{
+    let raw_paths: Vec<PathBuf> = paths
+        .into_iter()
+        .map(|p| p.as_ref().to_path_buf())
+        .collect();
+    let is_batch = raw_paths.len() > 1 || raw_paths.iter().any(|p| p.is_dir());
+    if !is_batch && raw_paths.len() == 1 {
+        let loader = FsSourceLoader::new();
+        return generate_with_loader(&raw_paths[0].to_string_lossy(), &loader, options);
+    }
+
+    let (expanded_paths, mut all_diagnostics) = expand_kdl_input_paths(&raw_paths, true);
+    let loader = FsSourceLoader::new();
+    let check_opts = CheckOptions::new().with_targets([options.target.ecosystem_name()]);
+    let mut all_sources = BTreeMap::new();
+    let mut compiled_modules: Vec<(String, Module)> = Vec::new();
+
+    for file_path in &expanded_paths {
+        let entry_str = file_path.to_string_lossy().into_owned();
+        let mut check_res = check_with_options(&entry_str, &loader, &check_opts);
+        for (k, v) in check_res.sources {
+            all_sources.insert(k, v);
+        }
+        for diag in check_res.diagnostics {
+            if !all_diagnostics.contains(&diag) {
+                all_diagnostics.push(diag);
+            }
+        }
+        if let Some(module) = check_res.module.take() {
+            compiled_modules.push((entry_str, module));
+        }
+    }
+
+    if all_diagnostics
+        .iter()
+        .any(|d| d.severity == Severity::Error)
+        || compiled_modules.is_empty()
+    {
+        return GenerateResult {
+            files: IndexMap::new(),
+            diagnostics: all_diagnostics,
+            sources: all_sources,
+        };
+    }
+
+    let Some(clean_rt_opt) = validate_target_options(
+        options,
+        &compiled_modules[0].1.source_file,
+        &mut all_diagnostics,
+    ) else {
+        return GenerateResult {
+            files: IndexMap::new(),
+            diagnostics: all_diagnostics,
+            sources: all_sources,
+        };
+    };
+
+    // Pass 1: Per-module parser emission & runtime capability/helper aggregation
+    let mut files = IndexMap::new();
+    let mut merged_builder = ModuleBuilder::new();
+    let mut merged_runtime_module = Module::default();
+    let mut per_module_opts = options.clone();
+    per_module_opts.module_stem = None;
+
+    for (entry_str, module) in &compiled_modules {
+        if !module.is_emittable() {
+            continue;
+        }
+        if let Some((_single_rt, builder)) = emit_module_parser_files(
+            module,
+            Some(entry_str),
+            &per_module_opts,
+            &mut files,
+            &mut all_diagnostics,
+        ) {
+            if let Err(err_msg) = merged_builder.merge_from(&builder) {
+                all_diagnostics.push(
+                    Diagnostic::error(DiagnosticCode::E400, err_msg, Span::EMPTY)
+                        .with_path(module.source_file.clone()),
+                );
+            }
+            merged_runtime_module
+                .structs
+                .extend(module.structs.iter().cloned());
+            merged_runtime_module
+                .functions
+                .extend(module.functions.iter().cloned());
+            merged_runtime_module
+                .extensions
+                .extend(module.extensions.iter().cloned());
+            for jd in &module.json_defs {
+                if !merged_runtime_module
+                    .json_defs
+                    .iter()
+                    .any(|existing| existing.name == jd.name)
+                {
+                    merged_runtime_module.json_defs.push(jd.clone());
+                }
+            }
+        }
+    }
+
+    if all_diagnostics
+        .iter()
+        .any(|d| d.severity == Severity::Error)
+    {
+        return GenerateResult {
+            files: IndexMap::new(),
+            diagnostics: all_diagnostics,
+            sources: all_sources,
+        };
+    }
+
+    // Pass 2: Shared runtime emission from aggregated module capabilities & builder
+    if options.separate_runtime
+        && !files.is_empty()
+        && let Some(clean_rt) = clean_rt_opt
+        && let Some(rt_code) =
+            emit_shared_runtime_for_target(&merged_runtime_module, &merged_builder, options)
+    {
+        files.insert(
+            format!("{clean_rt}.{}", options.target.extension()),
+            rt_code,
+        );
+    }
+
+    GenerateResult {
+        files,
+        diagnostics: all_diagnostics,
+        sources: all_sources,
+    }
 }
 
 /// Compiles and generates target code for an in-memory KDL 2.0 source string.
@@ -826,58 +988,23 @@ fn resolve_clean_runtime_name<'a>(
     Some(clean_rt)
 }
 
-fn emit_files_for_module(
-    module: &Module,
-    path_hint: Option<&str>,
-    options: &CodegenOptions,
+fn validate_target_options<'a>(
+    options: &'a CodegenOptions,
+    source_file: &str,
     diagnostics: &mut Vec<Diagnostic>,
-) -> IndexMap<String, String> {
-    let mut files = IndexMap::new();
-    let stem = resolve_module_stem(module, path_hint, options);
-
+) -> Option<Option<&'a str>> {
     match options.target {
-        Target::Python => {
-            let Some(clean_rt) = resolve_clean_runtime_name(
-                "python",
-                "Python",
-                "runtime module",
-                ".py",
-                options,
-                &module.source_file,
-                diagnostics,
-            ) else {
-                return files;
-            };
-
-            match emit_python_module(module, options) {
-                Ok((parser_code, runtime_code, _builder)) => {
-                    files.insert(format!("{stem}.py"), parser_code);
-                    if let Some(rt_code) = runtime_code {
-                        files.insert(format!("{clean_rt}.py"), rt_code);
-                    }
-                }
-                Err(errs) => {
-                    diagnostics.extend(errs);
-                }
-            }
-        }
-        Target::TypeScript => match emit_ts_module(module, options) {
-            Ok((ts_code, _builder)) => {
-                files.insert(format!("{stem}.ts"), ts_code);
-            }
-            Err(errs) => {
-                diagnostics.extend(errs);
-            }
-        },
-        Target::JavaScript => match emit_js_module(module, options) {
-            Ok((js_code, dts_code, _builder)) => {
-                files.insert(format!("{stem}.js"), js_code);
-                files.insert(format!("{stem}.d.ts"), dts_code);
-            }
-            Err(errs) => {
-                diagnostics.extend(errs);
-            }
-        },
+        Target::Python => resolve_clean_runtime_name(
+            "python",
+            "Python",
+            "runtime module",
+            ".py",
+            options,
+            source_file,
+            diagnostics,
+        )
+        .map(Some),
+        Target::TypeScript | Target::JavaScript => Some(None),
         Target::Go => {
             if !validate_go_package_name(&options.package) {
                 diagnostics.push(
@@ -886,62 +1013,34 @@ fn emit_files_for_module(
                         format!("invalid Go package name '{}'", options.package),
                         Span::EMPTY,
                     )
-                    .with_path(module.source_file.clone())
+                    .with_path(source_file.to_owned())
                     .with_hint(
                         "use a valid non-keyword Go package identifier (e.g. main, parsers)",
                     ),
                 );
-                return files;
+                return None;
             }
-            let Some(clean_rt) = resolve_clean_runtime_name(
+            resolve_clean_runtime_name(
                 "go",
                 "Go",
                 "runtime",
                 ".go",
                 options,
-                &module.source_file,
+                source_file,
                 diagnostics,
-            ) else {
-                return files;
-            };
-
-            match emit_go_module(module, options) {
-                Ok((parser_code, runtime_code, _builder)) => {
-                    files.insert(format!("{stem}.go"), parser_code);
-                    if let Some(rt_code) = runtime_code {
-                        files.insert(format!("{clean_rt}.go"), rt_code);
-                    }
-                }
-                Err(errs) => {
-                    diagnostics.extend(errs);
-                }
-            }
+            )
+            .map(Some)
         }
-        Target::Rust => {
-            let Some(clean_rt) = resolve_clean_runtime_name(
-                "rust",
-                "Rust",
-                "runtime module",
-                ".rs",
-                options,
-                &module.source_file,
-                diagnostics,
-            ) else {
-                return files;
-            };
-
-            match emit_rust_module(module, options) {
-                Ok((parser_code, runtime_code, _builder)) => {
-                    files.insert(format!("{stem}.rs"), parser_code);
-                    if let Some(rt_code) = runtime_code {
-                        files.insert(format!("{clean_rt}.rs"), rt_code);
-                    }
-                }
-                Err(errs) => {
-                    diagnostics.extend(errs);
-                }
-            }
-        }
+        Target::Rust => resolve_clean_runtime_name(
+            "rust",
+            "Rust",
+            "runtime module",
+            ".rs",
+            options,
+            source_file,
+            diagnostics,
+        )
+        .map(Some),
         Target::Elixir => {
             if !validate_elixir_package_name(&options.package) {
                 diagnostics.push(
@@ -950,36 +1049,23 @@ fn emit_files_for_module(
                         format!("invalid Elixir module prefix '{}'", options.package),
                         Span::EMPTY,
                     )
-                    .with_path(module.source_file.clone())
+                    .with_path(source_file.to_owned())
                     .with_hint(
                         "use valid dot-separated Elixir module segments (e.g. MyApp.Parsers)",
                     ),
                 );
-                return files;
+                return None;
             }
-            let Some(clean_rt) = resolve_clean_runtime_name(
+            resolve_clean_runtime_name(
                 "elixir",
                 "Elixir",
                 "runtime module",
                 ".ex",
                 options,
-                &module.source_file,
+                source_file,
                 diagnostics,
-            ) else {
-                return files;
-            };
-
-            match emit_elixir_module(module, options) {
-                Ok((parser_code, runtime_code, _builder)) => {
-                    files.insert(format!("{stem}.ex"), parser_code);
-                    if let Some(rt_code) = runtime_code {
-                        files.insert(format!("{clean_rt}.ex"), rt_code);
-                    }
-                }
-                Err(errs) => {
-                    diagnostics.extend(errs);
-                }
-            }
+            )
+            .map(Some)
         }
         Target::Php => {
             if !validate_php_namespace(&options.package) {
@@ -989,34 +1075,21 @@ fn emit_files_for_module(
                         format!("invalid PHP namespace '{}'", options.package),
                         Span::EMPTY,
                     )
-                    .with_path(module.source_file.clone())
+                    .with_path(source_file.to_owned())
                     .with_hint("use a valid PHP namespace (e.g. App\\Parsers or App.Parsers)"),
                 );
-                return files;
+                return None;
             }
-            let Some(clean_rt) = resolve_clean_runtime_name(
+            resolve_clean_runtime_name(
                 "php",
                 "PHP",
                 "runtime module",
                 ".php",
                 options,
-                &module.source_file,
+                source_file,
                 diagnostics,
-            ) else {
-                return files;
-            };
-
-            match emit_php_module(module, options) {
-                Ok((parser_code, runtime_code, _builder)) => {
-                    files.insert(format!("{stem}.php"), parser_code);
-                    if let Some(rt_code) = runtime_code {
-                        files.insert(format!("{clean_rt}.php"), rt_code);
-                    }
-                }
-                Err(errs) => {
-                    diagnostics.extend(errs);
-                }
-            }
+            )
+            .map(Some)
         }
         Target::CSharp => {
             if !validate_csharp_namespace(&options.package) {
@@ -1026,34 +1099,21 @@ fn emit_files_for_module(
                         format!("invalid C# namespace '{}'", options.package),
                         Span::EMPTY,
                     )
-                    .with_path(module.source_file.clone())
+                    .with_path(source_file.to_owned())
                     .with_hint("use valid dot-separated C# identifiers (e.g. MyApp.Parsers)"),
                 );
-                return files;
+                return None;
             }
-            let Some(clean_rt) = resolve_clean_runtime_name(
+            resolve_clean_runtime_name(
                 "csharp",
                 "C#",
                 "runtime",
                 ".cs",
                 options,
-                &module.source_file,
+                source_file,
                 diagnostics,
-            ) else {
-                return files;
-            };
-
-            match emit_csharp_module(module, options) {
-                Ok((parser_code, runtime_code, _builder)) => {
-                    files.insert(format!("{stem}.cs"), parser_code);
-                    if let Some(rt_code) = runtime_code {
-                        files.insert(format!("{clean_rt}.cs"), rt_code);
-                    }
-                }
-                Err(errs) => {
-                    diagnostics.extend(errs);
-                }
-            }
+            )
+            .map(Some)
         }
         Target::Kotlin => {
             if !validate_kotlin_package_name(&options.package) {
@@ -1063,38 +1123,441 @@ fn emit_files_for_module(
                         format!("invalid Kotlin package name '{}'", options.package),
                         Span::EMPTY,
                     )
-                    .with_path(module.source_file.clone())
+                    .with_path(source_file.to_owned())
                     .with_hint(
                         "use a valid dot-separated Kotlin package name (e.g. com.example.parsers)",
                     ),
                 );
-                return files;
+                return None;
             }
-            let Some(clean_rt) = resolve_clean_runtime_name(
+            resolve_clean_runtime_name(
                 "kotlin",
                 "Kotlin",
                 "runtime",
                 ".kt",
                 options,
-                &module.source_file,
+                source_file,
                 diagnostics,
-            ) else {
-                return files;
-            };
+            )
+            .map(Some)
+        }
+    }
+}
 
-            match emit_kotlin_module(module, options) {
-                Ok((parser_code, runtime_code, _builder)) => {
-                    files.insert(format!("{stem}.kt"), parser_code);
-                    if let Some(rt_code) = runtime_code {
-                        files.insert(format!("{clean_rt}.kt"), rt_code);
-                    }
-                }
-                Err(errs) => {
-                    diagnostics.extend(errs);
-                }
+fn emit_module_parser_files(
+    module: &Module,
+    path_hint: Option<&str>,
+    options: &CodegenOptions,
+    files: &mut IndexMap<String, String>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<(Option<String>, ModuleBuilder)> {
+    let stem = resolve_module_stem(module, path_hint, options);
+    match options.target {
+        Target::Python => match emit_python_module(module, options) {
+            Ok((parser_code, runtime_code, builder)) => {
+                files.insert(format!("{stem}.py"), parser_code);
+                Some((runtime_code, builder))
             }
+            Err(errs) => {
+                diagnostics.extend(errs);
+                None
+            }
+        },
+        Target::TypeScript => match emit_ts_module(module, options) {
+            Ok((ts_code, builder)) => {
+                files.insert(format!("{stem}.ts"), ts_code);
+                Some((None, builder))
+            }
+            Err(errs) => {
+                diagnostics.extend(errs);
+                None
+            }
+        },
+        Target::JavaScript => match emit_js_module(module, options) {
+            Ok((js_code, dts_code, builder)) => {
+                files.insert(format!("{stem}.js"), js_code);
+                files.insert(format!("{stem}.d.ts"), dts_code);
+                Some((None, builder))
+            }
+            Err(errs) => {
+                diagnostics.extend(errs);
+                None
+            }
+        },
+        Target::Go => match emit_go_module(module, options) {
+            Ok((parser_code, runtime_code, builder)) => {
+                files.insert(format!("{stem}.go"), parser_code);
+                Some((runtime_code, builder))
+            }
+            Err(errs) => {
+                diagnostics.extend(errs);
+                None
+            }
+        },
+        Target::Rust => match emit_rust_module(module, options) {
+            Ok((parser_code, runtime_code, builder)) => {
+                files.insert(format!("{stem}.rs"), parser_code);
+                Some((runtime_code, builder))
+            }
+            Err(errs) => {
+                diagnostics.extend(errs);
+                None
+            }
+        },
+        Target::Elixir => match emit_elixir_module(module, options) {
+            Ok((parser_code, runtime_code, builder)) => {
+                files.insert(format!("{stem}.ex"), parser_code);
+                Some((runtime_code, builder))
+            }
+            Err(errs) => {
+                diagnostics.extend(errs);
+                None
+            }
+        },
+        Target::Php => match emit_php_module(module, options) {
+            Ok((parser_code, runtime_code, builder)) => {
+                files.insert(format!("{stem}.php"), parser_code);
+                Some((runtime_code, builder))
+            }
+            Err(errs) => {
+                diagnostics.extend(errs);
+                None
+            }
+        },
+        Target::CSharp => match emit_csharp_module(module, options) {
+            Ok((parser_code, runtime_code, builder)) => {
+                files.insert(format!("{stem}.cs"), parser_code);
+                Some((runtime_code, builder))
+            }
+            Err(errs) => {
+                diagnostics.extend(errs);
+                None
+            }
+        },
+        Target::Kotlin => match emit_kotlin_module(module, options) {
+            Ok((parser_code, runtime_code, builder)) => {
+                files.insert(format!("{stem}.kt"), parser_code);
+                Some((runtime_code, builder))
+            }
+            Err(errs) => {
+                diagnostics.extend(errs);
+                None
+            }
+        },
+    }
+}
+
+fn emit_shared_runtime_for_target(
+    module: &Module,
+    builder: &ModuleBuilder,
+    options: &CodegenOptions,
+) -> Option<String> {
+    match options.target {
+        Target::Python => Some(emit_python_runtime_module(module, builder)),
+        Target::TypeScript | Target::JavaScript => None,
+        Target::Go => Some(emit_go_runtime_module(module, builder, options)),
+        Target::Rust => Some(emit_rust_runtime_module(module, builder, options)),
+        Target::Elixir => Some(emit_elixir_runtime_module(module, builder, options)),
+        Target::Php => Some(emit_php_runtime_module(module, builder, options)),
+        Target::CSharp => Some(emit_csharp_runtime_module(module, builder, options)),
+        Target::Kotlin => Some(emit_kotlin_runtime_module(module, builder, options)),
+    }
+}
+
+fn emit_files_for_module(
+    module: &Module,
+    path_hint: Option<&str>,
+    options: &CodegenOptions,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> IndexMap<String, String> {
+    let mut files = IndexMap::new();
+    let Some(clean_rt_opt) = validate_target_options(options, &module.source_file, diagnostics)
+    else {
+        return files;
+    };
+    if let Some((Some(rt_code), _builder)) =
+        emit_module_parser_files(module, path_hint, options, &mut files, diagnostics)
+        && let Some(clean_rt) = clean_rt_opt
+    {
+        files.insert(
+            format!("{clean_rt}.{}", options.target.extension()),
+            rt_code,
+        );
+    }
+    files
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::check::{check_path, check_paths};
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    struct TempBatchDir {
+        path: PathBuf,
+    }
+
+    impl TempBatchDir {
+        fn new(label: &str) -> Self {
+            let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "parsmith_batch_core_{label}_{}_{id}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).expect("create temp batch dir");
+            Self { path }
+        }
+
+        fn write(&self, rel: &str, content: &str) -> PathBuf {
+            let file_path = self.path.join(rel);
+            if let Some(parent) = file_path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(&file_path, content).unwrap();
+            file_path
         }
     }
 
-    files
+    impl Drop for TempBatchDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn expand_kdl_input_paths_sorts_filters_deduplicates_and_reports_empty_dir() {
+        let tmp = TempBatchDir::new("expand");
+        let yummy = tmp.write("yummy_anime.kdl", "struct Y { f { text } }\n");
+        let kodik = tmp.write("kodik.kdl", "struct K { f { text } }\n");
+        let common = tmp.write("_common.kdl", "define host=\"example.com\"\n");
+        tmp.write("readme.txt", "ignore me");
+        fs::create_dir_all(tmp.path.join("subdir.kdl")).unwrap();
+
+        // skip_underscore_in_dirs = true (for generate)
+        let (gen_paths, gen_diags) = expand_kdl_input_paths([&tmp.path], true);
+        assert!(gen_diags.is_empty(), "{gen_diags:?}");
+        let gen_names: Vec<_> = gen_paths
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(gen_names, vec!["kodik.kdl", "yummy_anime.kdl"]);
+
+        // skip_underscore_in_dirs = false (for check)
+        let (chk_paths, chk_diags) = expand_kdl_input_paths([&tmp.path], false);
+        assert!(chk_diags.is_empty(), "{chk_diags:?}");
+        let chk_names: Vec<_> = chk_paths
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(
+            chk_names,
+            vec!["_common.kdl", "kodik.kdl", "yummy_anime.kdl"]
+        );
+
+        // Deduplication when passing both directory and explicit file
+        let (dedup_paths, _) = expand_kdl_input_paths([&tmp.path, &kodik, &yummy, &common], true);
+        let dedup_names: Vec<_> = dedup_paths
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(
+            dedup_names,
+            vec!["kodik.kdl", "yummy_anime.kdl", "_common.kdl"]
+        );
+
+        // Empty directory reports E003
+        let empty_dir = tmp.path.join("empty");
+        fs::create_dir_all(&empty_dir).unwrap();
+        let (empty_paths, empty_diags) = expand_kdl_input_paths([&empty_dir], false);
+        assert!(empty_paths.is_empty());
+        assert_eq!(empty_diags.len(), 1);
+        assert_eq!(empty_diags[0].code, DiagnosticCode::E003);
+    }
+
+    #[test]
+    fn check_paths_and_dir_validate_all_files_and_deduplicate_shared_import_diagnostics() {
+        let tmp = TempBatchDir::new("check_batch");
+        tmp.write(
+            "_common.kdl",
+            "struct SharedBroken {\n    bad { css \"div[\"; text }\n}\n",
+        );
+        let a = tmp.write(
+            "a.kdl",
+            "import \"./_common.kdl\" { (struct)SharedBroken }\nstruct A {\n    s { nested SharedBroken }\n}\n",
+        );
+        let b = tmp.write(
+            "b.kdl",
+            "import \"./_common.kdl\" { (struct)SharedBroken }\nstruct B {\n    s { nested SharedBroken }\n}\n",
+        );
+
+        let res_dir = check_path(&tmp.path);
+        assert!(res_dir.has_errors());
+        let e002_count = res_dir
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == DiagnosticCode::E002)
+            .count();
+        assert_eq!(
+            e002_count, 1,
+            "shared _common.kdl E002 diagnostic must be deduplicated: {:?}",
+            res_dir.diagnostics
+        );
+
+        let res_multi = check_paths([&a, &b]);
+        assert_eq!(
+            res_multi
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == DiagnosticCode::E002)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn generate_paths_two_pass_shared_runtime_and_python_package_relative_default() {
+        let tmp = TempBatchDir::new("gen_two_pass");
+        tmp.write("_common.kdl", "define BASE-HOST=\"example.com\"\n");
+        let defines_only = tmp.write("defines_only.kdl", "define UNUSED-CONST=\"abc\"\n");
+        let kodik = tmp.write(
+            "kodik.kdl",
+            r#"
+import "./_common.kdl" { (define)BASE-HOST }
+struct KodikPage {
+    title { css "h1"; text }
+    @request "curl https://example.com/watch/{{id}}"
+}
+"#,
+        );
+        let yummy = tmp.write(
+            "yummy_anime.kdl",
+            r#"
+json AnimeItem {
+    id int
+    title str
+}
+json ApiError {
+    error str
+}
+(rest)struct YummyAnimeClient {
+    @error 404 ApiError
+    @request "curl https://api.example.com/anime/{{id:int}}" name="get_anime" response=AnimeItem
+}
+"#,
+        );
+
+        // 1. Directory generation with default Python options (`runtime_name = ".parsmith_runtime"`)
+        let opts = CodegenOptions::new(Target::Python).with_separate_runtime(true);
+        assert_eq!(opts.runtime_name, DEFAULT_PYTHON_RUNTIME_NAME);
+
+        let res_dir = generate_path(&tmp.path, &opts);
+        assert!(!res_dir.has_errors(), "{:?}", res_dir.diagnostics);
+        let file_keys: Vec<&str> = res_dir.files.keys().map(String::as_str).collect();
+        assert_eq!(
+            file_keys,
+            vec!["kodik.py", "yummy_anime.py", "parsmith_runtime.py"]
+        );
+        assert!(!res_dir.files.contains_key("_common.py"));
+        assert!(!res_dir.files.contains_key("defines_only.py"));
+
+        assert!(
+            res_dir.files["kodik.py"].contains("from .parsmith_runtime import "),
+            "expected package-relative import in kodik.py, got:\n{}",
+            res_dir.files["kodik.py"]
+        );
+        assert!(
+            res_dir.files["yummy_anime.py"].contains("from .parsmith_runtime import "),
+            "expected package-relative import in yummy_anime.py, got:\n{}",
+            res_dir.files["yummy_anime.py"]
+        );
+
+        let rt_dir = &res_dir.files["parsmith_runtime.py"];
+        assert!(
+            rt_dir.contains("async def rt_fetch_async(") && rt_dir.contains("def rt_fetch("),
+            "parsmith_runtime.py missing @request fetch helpers from kodik.kdl"
+        );
+        assert!(
+            rt_dir.contains("class Ok(Generic[_T]):")
+                && rt_dir.contains("async def rt_rest_call_async(")
+                && rt_dir.contains("def rt_rest_call("),
+            "parsmith_runtime.py missing REST helpers from yummy_anime.kdl"
+        );
+
+        // 2. Reverse file order (`yummy_anime.kdl` first, `kodik.kdl` second) produces the same complete runtime
+        let res_rev = generate_paths([&yummy, &kodik, &defines_only], &opts);
+        assert!(!res_rev.has_errors(), "{:?}", res_rev.diagnostics);
+        let rt_rev = &res_rev.files["parsmith_runtime.py"];
+        assert!(rt_rev.contains("async def rt_fetch_async("));
+        assert!(rt_rev.contains("class Ok(Generic[_T]):"));
+        assert!(rt_rev.contains("async def rt_rest_call_async("));
+
+        // 3. Explicit non-dot runtime_name ("parsmith_runtime") emits absolute import
+        let abs_opts = opts.clone().with_runtime_name("parsmith_runtime");
+        let res_abs = generate_path(&tmp.path, &abs_opts);
+        assert!(!res_abs.has_errors(), "{:?}", res_abs.diagnostics);
+        assert!(res_abs.files["kodik.py"].contains("from parsmith_runtime import "));
+        assert!(res_abs.files["yummy_anime.py"].contains("from parsmith_runtime import "));
+        assert!(res_abs.files.contains_key("parsmith_runtime.py"));
+    }
+
+    #[test]
+    fn generate_paths_conflicting_extension_helpers_across_files_reports_e400() {
+        let tmp = TempBatchDir::new("ext_conflict");
+        let f1 = tmp.write(
+            "one.kdl",
+            r#"
+extension StrExt {
+    clean {
+        sig str str
+        py {
+            helper "norm_val" {
+                source "def norm_val(s: str) -> str:\n    return s.strip()"
+            }
+            emit "{{out}} = norm_val({{in}})"
+        }
+    }
+}
+struct One {
+    title { css "h1"; text; !StrExt.clean }
+}
+"#,
+        );
+        let f2 = tmp.write(
+            "two.kdl",
+            r#"
+extension StrExt {
+    clean {
+        sig str str
+        py {
+            helper "norm_val" {
+                source "def norm_val(s: str) -> str:\n    return s.lower()"
+            }
+            emit "{{out}} = norm_val({{in}})"
+        }
+    }
+}
+struct Two {
+    title { css "h2"; text; !StrExt.clean }
+}
+"#,
+        );
+
+        let opts = CodegenOptions::new(Target::Python).with_separate_runtime(true);
+        let res = generate_paths([&f1, &f2], &opts);
+        assert!(res.has_errors());
+        assert!(res.files.is_empty());
+        assert!(
+            res.diagnostics
+                .iter()
+                .any(|d| d.code == DiagnosticCode::E400
+                    && d.message
+                        .contains("conflicting runtime helper definition: norm_val")),
+            "expected E400 conflicting runtime helper diagnostic, got: {:?}",
+            res.diagnostics
+        );
+    }
 }

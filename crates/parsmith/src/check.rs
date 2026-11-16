@@ -1,6 +1,7 @@
 //! High-level schema validation (`check`) and compilation (`compile`) entrypoints.
 #![allow(clippy::result_large_err)]
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::ast::Module;
@@ -8,7 +9,7 @@ use crate::diagnostic::{CheckResult, Severity};
 use crate::imports::{resolve_source_with_loader, resolve_with_loader};
 use crate::linter::lint_program;
 use crate::linter::symbols::lint_pass4_symbols;
-use crate::loader::{FsSourceLoader, SourceLoader};
+use crate::loader::{FsSourceLoader, SourceLoader, expand_kdl_input_paths};
 use crate::lowering::lower_program;
 
 /// Options controlling schema validation (`parsmith check`).
@@ -40,24 +41,95 @@ impl CheckOptions {
     }
 }
 
-/// Validates a KDL 2.0 schema file on disk (and all its transitive `import` dependencies)
-/// across all 4 target ecosystems.
+/// Validates a KDL 2.0 schema file or directory on disk (and all transitive `import` dependencies)
+/// across all target ecosystems.
 pub fn check_path(path: impl AsRef<Path>) -> CheckResult {
+    let p = path.as_ref();
+    if p.is_dir() {
+        return check_paths([p]);
+    }
     let loader = FsSourceLoader::new();
-    let entry_path = path.as_ref().to_string_lossy();
+    let entry_path = p.to_string_lossy();
     check_with_loader(&entry_path, &loader)
 }
 
-/// Validates a KDL 2.0 schema file on disk with an optional target ecosystem filter.
+/// Validates a KDL 2.0 schema file or directory on disk with an optional target ecosystem filter.
 pub fn check_path_with_targets<P, I, S>(path: P, targets: Option<I>) -> CheckResult
 where
     P: AsRef<Path>,
     I: IntoIterator<Item = S>,
     S: Into<String>,
 {
+    let p = path.as_ref();
+    if p.is_dir() {
+        return check_paths_with_targets([p], targets);
+    }
     let loader = FsSourceLoader::new();
-    let entry_path = path.as_ref().to_string_lossy();
+    let entry_path = p.to_string_lossy();
     check_with_loader_and_targets(&entry_path, &loader, targets)
+}
+
+/// Validates one or more KDL 2.0 schema files and/or directories on disk across all target ecosystems.
+///
+/// Directories are scanned flat (`*.kdl`, including `_*.kdl`) in lexicographical order.
+pub fn check_paths<I, P>(paths: I) -> CheckResult
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+{
+    check_paths_with_options(paths, &CheckOptions::default())
+}
+
+/// Validates one or more KDL 2.0 schema files and/or directories on disk with an optional target ecosystem filter.
+pub fn check_paths_with_targets<I, P, T, S>(paths: I, targets: Option<T>) -> CheckResult
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+    T: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let opts = match targets {
+        Some(iter) => CheckOptions::new().with_targets(iter),
+        None => CheckOptions::default(),
+    };
+    check_paths_with_options(paths, &opts)
+}
+
+/// Validates one or more KDL 2.0 schema files and/or directories on disk with `options`.
+pub fn check_paths_with_options<I, P>(paths: I, options: &CheckOptions) -> CheckResult
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>,
+{
+    let (expanded_paths, mut all_diagnostics) = expand_kdl_input_paths(paths, false);
+    let loader = FsSourceLoader::new();
+    let mut all_sources = BTreeMap::new();
+    let mut last_program = None;
+    let mut last_module = None;
+
+    for file_path in &expanded_paths {
+        let entry_str = file_path.to_string_lossy();
+        let res = check_with_options(&entry_str, &loader, options);
+        for (k, v) in res.sources {
+            all_sources.insert(k, v);
+        }
+        for diag in res.diagnostics {
+            if !all_diagnostics.contains(&diag) {
+                all_diagnostics.push(diag);
+            }
+        }
+        if res.program.is_some() {
+            last_program = res.program;
+        }
+        if res.module.is_some() {
+            last_module = res.module;
+        }
+    }
+
+    CheckResult::new(all_diagnostics)
+        .with_sources(all_sources)
+        .with_program(last_program)
+        .with_module(last_module)
 }
 
 /// Validates an in-memory KDL 2.0 source string across all 4 target ecosystems.

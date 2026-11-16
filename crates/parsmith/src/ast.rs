@@ -1305,6 +1305,12 @@ impl Module {
             .find(|op| op.qualified_name == qualified_name)
     }
 
+    /// Returns `true` if this module declares at least one emittable runtime artifact
+    /// (`struct`, `fn`, or `json`), as opposed to a helper-only module (`define` / `extension` only).
+    pub fn is_emittable(&self) -> bool {
+        !self.structs.is_empty() || !self.functions.is_empty() || !self.json_defs.is_empty()
+    }
+
     /// Resolves the effective result union type alias name for `alias_name` on `struct_name`,
     /// prefixing with `to_pascal_case(struct_name)` if multiple `(rest)struct`s in the module
     /// synthesize a result alias with the same `alias_name`.

@@ -1361,7 +1361,8 @@ impl<D: PyDomSpelling> LanguageEmitter for PythonEmitter<D> {
             let rt_names = self.collect_separate_runtime_imports(builder);
             if !rt_names.is_empty() {
                 let joined = rt_names.join(", ");
-                wln!(writer, "from {} import {joined}", self.options.runtime_name);
+                let rt_import_mod = self.options.runtime_name.trim_end_matches(".py");
+                wln!(writer, "from {rt_import_mod} import {joined}");
             }
         }
 
