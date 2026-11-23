@@ -52,6 +52,14 @@ pub const HTTP_TRANSPORT_RUNTIME_SYMBOLS: &[&str] = &[
     "HttpRequest",
     "RawResponse",
     "TransportError",
+    "HttpStatusError",
+    "HeadersLike",
+    "HttpResponseLike",
+    "AiohttpResponseLike",
+    "HttpxLike",
+    "AsyncHttpxLike",
+    "RequestsLike",
+    "AiohttpLike",
     "SyncTransport",
     "AsyncTransport",
     "HttpxTransport",
@@ -77,8 +85,9 @@ pub const REST_CORE_RUNTIME_SYMBOLS: &[&str] = &[
     "rt_dispatch_response",
 ];
 
-/// Unified HTTP transport contract (`HttpRequest`, `RawResponse`, `TransportError`, `SyncTransport`,
-/// `AsyncTransport`), lazy-imported built-in adapters, `via_*` factory functions, and `rt_build_request`.
+/// Unified HTTP transport contract (`HttpRequest`, `RawResponse`, `TransportError`, `HttpStatusError`,
+/// `*Like` client/response protocols, `SyncTransport`, `AsyncTransport`), built-in adapters,
+/// `via_*` factory functions, and `rt_build_request`.
 pub const STD_HTTP_TRANSPORT_CODE: &str = include_str!("runtime/http_transport.py");
 
 /// Synchronous HTML/raw `@request` fetch helper (`rt_fetch`).
@@ -91,6 +100,8 @@ def rt_fetch(
     response_join: str = "",
 ) -> str:
     resp = transport.send(req)
+    if resp.status >= 400:
+        raise HttpStatusError(resp)
     if response_path:
         data: Any = json.loads(resp.text)
         for part in response_path.split("."):
@@ -111,6 +122,8 @@ async def rt_fetch_async(
     response_join: str = "",
 ) -> str:
     resp = await transport.send(req)
+    if resp.status >= 400:
+        raise HttpStatusError(resp)
     if response_path:
         data: Any = json.loads(resp.text)
         for part in response_path.split("."):
@@ -167,10 +180,10 @@ pub fn require_http_transport_std(builder: &mut ModuleBuilder, separate_runtime:
         STD_HTTP_TRANSPORT_KEY,
         STD_HTTP_TRANSPORT_CODE,
         [
-            "from collections.abc import Mapping",
+            "from collections.abc import Iterable, Mapping",
+            "from contextlib import AbstractAsyncContextManager",
             "from dataclasses import dataclass",
             "from dataclasses import field",
-            "import importlib",
             "import json",
             "import urllib.error",
             "import urllib.parse",
