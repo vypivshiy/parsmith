@@ -157,7 +157,9 @@ fn snapshot_python_html_fetch_requests() {
     let opts = CodegenOptions::new(Target::Python);
     let res = generate_source(SCHEMA_HTML_FETCH_REQUESTS, Some("html_fetch.kdl"), &opts);
     assert!(!res.has_errors(), "{:?}", res.diagnostics);
-    insta::assert_snapshot!(res.primary_code().unwrap());
+    let code = res.primary_code().unwrap();
+    assert!(!code.contains("import importlib"));
+    insta::assert_snapshot!(code);
 }
 
 #[test]
@@ -167,7 +169,9 @@ fn snapshot_python_rest_client_typeddict_both() {
         .with_http_io(HttpIo::Both);
     let res = generate_source(SCHEMA_REST_CLIENT, Some("rest_client.kdl"), &opts);
     assert!(!res.has_errors(), "{:?}", res.diagnostics);
-    insta::assert_snapshot!(res.primary_code().unwrap());
+    let code = res.primary_code().unwrap();
+    assert!(!code.contains("import importlib"));
+    insta::assert_snapshot!(code);
 }
 
 #[test]
@@ -177,7 +181,9 @@ fn snapshot_python_rest_client_dataclass_sync() {
         .with_http_io(HttpIo::Sync);
     let res = generate_source(SCHEMA_REST_CLIENT, Some("rest_client_dc_sync.kdl"), &opts);
     assert!(!res.has_errors(), "{:?}", res.diagnostics);
-    insta::assert_snapshot!(res.primary_code().unwrap());
+    let code = res.primary_code().unwrap();
+    assert!(!code.contains("import importlib"));
+    insta::assert_snapshot!(code);
 }
 
 #[test]
@@ -185,7 +191,9 @@ fn snapshot_python_rest_client_async_only() {
     let opts = CodegenOptions::new(Target::Python).with_http_io(HttpIo::Async);
     let res = generate_source(SCHEMA_REST_CLIENT, Some("rest_client_async.kdl"), &opts);
     assert!(!res.has_errors(), "{:?}", res.diagnostics);
-    insta::assert_snapshot!(res.primary_code().unwrap());
+    let code = res.primary_code().unwrap();
+    assert!(!code.contains("import importlib"));
+    insta::assert_snapshot!(code);
 }
 
 #[test]
@@ -196,6 +204,8 @@ fn snapshot_python_rest_client_separate_runtime() {
     let res = generate_source(SCHEMA_REST_CLIENT, Some("rest_sep.kdl"), &opts);
     assert!(!res.has_errors(), "{:?}", res.diagnostics);
     assert_eq!(res.files.len(), 2);
+    assert!(!res.files["rest_sep.py"].contains("import importlib"));
+    assert!(!res.files["parsmith_runtime.py"].contains("import importlib"));
     insta::assert_snapshot!("rest_separate_runtime_parser", &res.files["rest_sep.py"]);
     insta::assert_snapshot!(
         "rest_separate_runtime_module",
@@ -238,6 +248,10 @@ fn python_json_and_rest_toolchain_pytest_and_mypy_strict() {
     );
     assert!(!res_fetch_td.has_errors(), "{:?}", res_fetch_td.diagnostics);
     for (fname, code) in &res_fetch_td.files {
+        assert!(
+            !code.contains("import importlib"),
+            "{fname} must not import importlib"
+        );
         generated_files.push(tmp.write(fname, code));
     }
 
@@ -248,6 +262,10 @@ fn python_json_and_rest_toolchain_pytest_and_mypy_strict() {
     );
     assert!(!res_fetch_dc.has_errors(), "{:?}", res_fetch_dc.diagnostics);
     for (fname, code) in &res_fetch_dc.files {
+        assert!(
+            !code.contains("import importlib"),
+            "{fname} must not import importlib"
+        );
         generated_files.push(tmp.write(fname, code));
     }
 
@@ -259,6 +277,10 @@ fn python_json_and_rest_toolchain_pytest_and_mypy_strict() {
     );
     assert!(!res_rest_td.has_errors(), "{:?}", res_rest_td.diagnostics);
     for (fname, code) in &res_rest_td.files {
+        assert!(
+            !code.contains("import importlib"),
+            "{fname} must not import importlib"
+        );
         generated_files.push(tmp.write(fname, code));
     }
 
@@ -269,6 +291,10 @@ fn python_json_and_rest_toolchain_pytest_and_mypy_strict() {
     );
     assert!(!res_rest_dc.has_errors(), "{:?}", res_rest_dc.diagnostics);
     for (fname, code) in &res_rest_dc.files {
+        assert!(
+            !code.contains("import importlib"),
+            "{fname} must not import importlib"
+        );
         generated_files.push(tmp.write(fname, code));
     }
 
@@ -283,6 +309,10 @@ fn python_json_and_rest_toolchain_pytest_and_mypy_strict() {
         res_rest_sync.diagnostics
     );
     for (fname, code) in &res_rest_sync.files {
+        assert!(
+            !code.contains("import importlib"),
+            "{fname} must not import importlib"
+        );
         generated_files.push(tmp.write(fname, code));
     }
 
@@ -297,6 +327,10 @@ fn python_json_and_rest_toolchain_pytest_and_mypy_strict() {
         res_rest_async.diagnostics
     );
     for (fname, code) in &res_rest_async.files {
+        assert!(
+            !code.contains("import importlib"),
+            "{fname} must not import importlib"
+        );
         generated_files.push(tmp.write(fname, code));
     }
 
@@ -309,6 +343,10 @@ fn python_json_and_rest_toolchain_pytest_and_mypy_strict() {
     );
     assert!(!res_rest_sep.has_errors(), "{:?}", res_rest_sep.diagnostics);
     for (fname, code) in &res_rest_sep.files {
+        assert!(
+            !code.contains("import importlib"),
+            "{fname} must not import importlib"
+        );
         generated_files.push(tmp.write(fname, code));
     }
 
@@ -316,15 +354,17 @@ fn python_json_and_rest_toolchain_pytest_and_mypy_strict() {
     let test_suite_py = r##"from __future__ import annotations
 
 import asyncio
+from contextlib import AbstractAsyncContextManager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-import sys
 import threading
-import types
 from typing import Any
 import urllib.error
 
+import aiohttp
+import httpx
 import pytest
+import requests
 
 import m_json_td
 import m_json_dc
@@ -711,15 +751,24 @@ def test_via_urllib_against_local_http_server_and_rest_monad() -> None:
         server.server_close()
 
 
-def test_lazy_adapter_factories_httpx_requests_aiohttp(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Verify via_httpx, via_httpx_async, via_requests, via_aiohttp lazy imports and strict error catching
+def test_protocol_adapter_factories_httpx_requests_aiohttp() -> None:
+    # Verify via_httpx, via_httpx_async, via_requests, via_aiohttp with duck-typed clients
+    # (including an independent httpx2-like client/error) and strict exception boundaries.
     class FakeHttpxError(Exception):
+        pass
+
+    class FakeHttpx2Error(Exception):
+        pass
+
+    class FakeRequestsError(Exception):
+        pass
+
+    class FakeAiohttpError(Exception):
         pass
 
     class FakeResp:
         def __init__(self, status_code: int, headers: dict[str, str], text: str) -> None:
             self.status_code = status_code
-            self.status = status_code
             self.headers = headers
             self._text = text
 
@@ -727,45 +776,304 @@ def test_lazy_adapter_factories_httpx_requests_aiohttp(monkeypatch: pytest.Monke
         def text(self) -> str:
             return self._text
 
+    class FakeAiohttpResp:
+        def __init__(
+            self,
+            status: int,
+            headers: dict[str, str],
+            body: str,
+            text_error: Exception | None = None,
+        ) -> None:
+            self.status = status
+            self.headers = headers
+            self._body = body
+            self._text_error = text_error
+
+        async def text(self) -> str:
+            if self._text_error is not None:
+                raise self._text_error
+            return self._body
+
+    class FakeAiohttpCtx(AbstractAsyncContextManager[FakeAiohttpResp]):
+        def __init__(self, resp: FakeAiohttpResp) -> None:
+            self._resp = resp
+
+        async def __aenter__(self) -> FakeAiohttpResp:
+            return self._resp
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            return None
+
     class FakeHttpxClient:
-        def __init__(self, fail: bool = False) -> None:
-            self.fail = fail
+        def __init__(self, error: Exception | None = None, lib: str = "httpx") -> None:
+            self._error = error
+            self._lib = lib
 
-        def request(self, method: str, url: str, **kw: Any) -> FakeResp:
-            if self.fail:
-                raise FakeHttpxError("httpx network down")
-            return FakeResp(200, {"X-Lib": "httpx"}, '{"ok": true}')
+        def request(
+            self,
+            method: str,
+            url: str,
+            *,
+            content: Any = None,
+            data: Any = None,
+            json: Any = None,
+            params: Any = None,
+            headers: Any = None,
+            cookies: Any = None,
+        ) -> FakeResp:
+            if self._error is not None:
+                raise self._error
+            return FakeResp(200, {"X-Lib": self._lib}, '{"ok": true}')
 
-    fake_httpx = types.ModuleType("httpx")
-    setattr(fake_httpx, "HTTPError", FakeHttpxError)
-    monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
+    class FakeAsyncHttpxClient:
+        def __init__(self, error: Exception | None = None, lib: str = "httpx-async") -> None:
+            self._error = error
+            self._lib = lib
 
-    ht_ok = m_rest_td.via_httpx(FakeHttpxClient(fail=False))
-    resp = ht_ok.send(m_rest_td.HttpRequest(method="GET", url="https://api.example.com"))
-    assert resp.status == 200
-    assert resp.headers["x-lib"] == "httpx"
-
-    ht_fail = m_rest_td.via_httpx(FakeHttpxClient(fail=True))
-    with pytest.raises(m_rest_td.TransportError) as exc_info:
-        ht_fail.send(m_rest_td.HttpRequest(method="GET", url="https://api.example.com"))
-    assert isinstance(exc_info.value.cause, FakeHttpxError)
-
-    # Requests adapter
-    class FakeRequestsError(Exception):
-        pass
+        async def request(
+            self,
+            method: str,
+            url: str,
+            *,
+            content: Any = None,
+            data: Any = None,
+            json: Any = None,
+            params: Any = None,
+            headers: Any = None,
+            cookies: Any = None,
+        ) -> FakeResp:
+            if self._error is not None:
+                raise self._error
+            return FakeResp(200, {"X-Lib": self._lib}, '{"ok": true}')
 
     class FakeRequestsSession:
-        def request(self, method: str, url: str, **kw: Any) -> FakeResp:
-            raise FakeRequestsError("requests network down")
+        def __init__(self, error: Exception | None = None) -> None:
+            self._error = error
 
-    fake_requests = types.ModuleType("requests")
-    setattr(fake_requests, "RequestException", FakeRequestsError)
-    monkeypatch.setitem(sys.modules, "requests", fake_requests)
+        def request(
+            self,
+            method: str,
+            url: str,
+            *,
+            params: Any = None,
+            data: Any = None,
+            headers: Any = None,
+            cookies: Any = None,
+            json: Any = None,
+        ) -> FakeResp:
+            if self._error is not None:
+                raise self._error
+            return FakeResp(200, {"X-Lib": "requests"}, '{"ok": true}')
 
-    rt_fail = m_rest_td.via_requests(FakeRequestsSession())
+    class FakeAiohttpSession:
+        def __init__(
+            self,
+            error: Exception | None = None,
+            text_error: Exception | None = None,
+        ) -> None:
+            self._error = error
+            self._text_error = text_error
+
+        def request(
+            self,
+            method: str,
+            url: str,
+            *,
+            params: Any = None,
+            data: Any = None,
+            headers: Any = None,
+            cookies: Any = None,
+            json: Any = None,
+        ) -> AbstractAsyncContextManager[FakeAiohttpResp]:
+            if self._error is not None:
+                raise self._error
+            return FakeAiohttpCtx(
+                FakeAiohttpResp(200, {"X-Lib": "aiohttp"}, '{"ok": true}', self._text_error)
+            )
+
+    req = m_rest_td.HttpRequest(method="GET", url="https://api.example.com")
+
+    # 1. via_httpx: success, httpx error, httpx2-like error, TypeError/AttributeError passthrough
+    resp = m_rest_td.via_httpx(FakeHttpxClient()).send(req)
+    assert resp.status == 200
+    assert resp.headers["x-lib"] == "httpx"
+    assert resp.text == '{"ok": true}'
+
+    resp_h2 = m_rest_td.via_httpx(FakeHttpxClient(lib="httpx2")).send(req)
+    assert resp_h2.headers["x-lib"] == "httpx2"
+
+    with pytest.raises(m_rest_td.TransportError) as httpx_exc:
+        m_rest_td.via_httpx(FakeHttpxClient(FakeHttpxError("httpx down"))).send(req)
+    assert isinstance(httpx_exc.value.cause, FakeHttpxError)
+
+    with pytest.raises(m_rest_td.TransportError) as httpx2_exc:
+        m_rest_td.via_httpx(FakeHttpxClient(FakeHttpx2Error("httpx2 down"))).send(req)
+    assert isinstance(httpx2_exc.value.cause, FakeHttpx2Error)
+
+    with pytest.raises(TypeError, match="bad kwarg"):
+        m_rest_td.via_httpx(FakeHttpxClient(TypeError("bad kwarg"))).send(req)
+
+    with pytest.raises(AttributeError, match="missing attr"):
+        m_rest_td.via_httpx(FakeHttpxClient(AttributeError("missing attr"))).send(req)
+
+    # 2. via_httpx_async: success, httpx/httpx2 errors, TypeError/AttributeError passthrough
+    async def _check_async_adapters() -> None:
+        aresp = await m_rest_td.via_httpx_async(FakeAsyncHttpxClient()).send(req)
+        assert aresp.status == 200
+        assert aresp.headers["x-lib"] == "httpx-async"
+
+        with pytest.raises(m_rest_td.TransportError) as ahttpx_exc:
+            await m_rest_td.via_httpx_async(
+                FakeAsyncHttpxClient(FakeHttpx2Error("async httpx2 down"))
+            ).send(req)
+        assert isinstance(ahttpx_exc.value.cause, FakeHttpx2Error)
+
+        with pytest.raises(TypeError, match="async bad kwarg"):
+            await m_rest_td.via_httpx_async(
+                FakeAsyncHttpxClient(TypeError("async bad kwarg"))
+            ).send(req)
+
+        with pytest.raises(AttributeError, match="async missing attr"):
+            await m_rest_td.via_httpx_async(
+                FakeAsyncHttpxClient(AttributeError("async missing attr"))
+            ).send(req)
+
+        # 4. via_aiohttp: success, client error, text read error, TypeError/AttributeError passthrough
+        aio_resp = await m_rest_td.via_aiohttp(FakeAiohttpSession()).send(req)
+        assert aio_resp.status == 200
+        assert aio_resp.headers["x-lib"] == "aiohttp"
+        assert aio_resp.text == '{"ok": true}'
+
+        with pytest.raises(m_rest_td.TransportError) as aio_exc:
+            await m_rest_td.via_aiohttp(
+                FakeAiohttpSession(FakeAiohttpError("aiohttp down"))
+            ).send(req)
+        assert isinstance(aio_exc.value.cause, FakeAiohttpError)
+
+        with pytest.raises(m_rest_td.TransportError) as aio_text_exc:
+            await m_rest_td.via_aiohttp(
+                FakeAiohttpSession(text_error=FakeAiohttpError("aiohttp read failed"))
+            ).send(req)
+        assert isinstance(aio_text_exc.value.cause, FakeAiohttpError)
+
+        with pytest.raises(TypeError, match="aiohttp bad kwarg"):
+            await m_rest_td.via_aiohttp(
+                FakeAiohttpSession(TypeError("aiohttp bad kwarg"))
+            ).send(req)
+
+        with pytest.raises(AttributeError, match="aiohttp missing attr"):
+            await m_rest_td.via_aiohttp(
+                FakeAiohttpSession(AttributeError("aiohttp missing attr"))
+            ).send(req)
+
+    asyncio.run(_check_async_adapters())
+
+    # 3. via_requests: success, requests error, TypeError/AttributeError passthrough
+    rresp = m_rest_td.via_requests(FakeRequestsSession()).send(req)
+    assert rresp.status == 200
+    assert rresp.headers["x-lib"] == "requests"
+
     with pytest.raises(m_rest_td.TransportError) as req_exc:
-        rt_fail.send(m_rest_td.HttpRequest(method="GET", url="https://api.example.com"))
+        m_rest_td.via_requests(FakeRequestsSession(FakeRequestsError("requests down"))).send(req)
     assert isinstance(req_exc.value.cause, FakeRequestsError)
+
+    with pytest.raises(TypeError, match="requests bad kwarg"):
+        m_rest_td.via_requests(FakeRequestsSession(TypeError("requests bad kwarg"))).send(req)
+
+    with pytest.raises(AttributeError, match="requests missing attr"):
+        m_rest_td.via_requests(FakeRequestsSession(AttributeError("requests missing attr"))).send(req)
+
+
+def test_html_fetch_http_status_error_and_rest_error_dispatch() -> None:
+    for status, body in [(404, "Page not found"), (500, "Internal Server Error")]:
+        raw_err = m_fetch_td.RawResponse(
+            status=status,
+            headers={"x-err": f"status-{status}"},
+            text=body,
+        )
+
+        def _sync_err(req: m_fetch_td.HttpRequest, _r: m_fetch_td.RawResponse = raw_err) -> m_fetch_td.RawResponse:
+            return _r
+
+        with pytest.raises(m_fetch_td.HttpStatusError) as sync_exc:
+            m_fetch_td.ArticlePage.fetch(MockSyncTransport(_sync_err), id=7, sid="s1")
+        err = sync_exc.value
+        assert not isinstance(err, m_fetch_td.TransportError)
+        assert err.status == status
+        assert err.headers == {"x-err": f"status-{status}"}
+        assert err.text == body
+        assert err.response == raw_err
+
+        async def _async_err(
+            req: m_fetch_td.HttpRequest,
+            _r: m_fetch_td.RawResponse = raw_err,
+        ) -> m_fetch_td.RawResponse:
+            return _r
+
+        with pytest.raises(m_fetch_td.HttpStatusError) as async_exc:
+            asyncio.run(
+                m_fetch_td.ArticlePage.async_fetch(MockAsyncTransport(_async_err), id=7, sid="s1")
+            )
+        aerr = async_exc.value
+        assert not isinstance(aerr, m_fetch_td.TransportError)
+        assert aerr.status == status
+        assert aerr.headers == {"x-err": f"status-{status}"}
+        assert aerr.text == body
+        assert aerr.response == raw_err
+
+    # Meanwhile, (rest)struct endpoints MUST still route 404/500 to @error / UnknownErr
+    def _rest_404(req: Any) -> m_rest_td.RawResponse:
+        return m_rest_td.RawResponse(
+            status=404,
+            headers={},
+            text=json.dumps({"message": "No such user"}),
+        )
+
+    res_404 = m_rest_td.UserApi.get_user(MockSyncTransport(_rest_404), id=99)
+    assert isinstance(res_404, m_rest_td.UserApiErr404)
+    assert res_404.status == 404
+    assert res_404.value == {"message": "No such user"}
+
+    def _rest_500(req: Any) -> m_rest_td.RawResponse:
+        return m_rest_td.RawResponse(
+            status=500,
+            headers={},
+            text=json.dumps({"detail": "boom"}),
+        )
+
+    res_500 = m_rest_td.UserApi.get_user(MockSyncTransport(_rest_500), id=99)
+    assert isinstance(res_500, m_rest_td.UnknownErr)
+    assert res_500.status == 500
+    assert res_500.body == {"detail": "boom"}
+
+
+def test_real_http_clients_satisfy_protocols_strict_typing() -> None:
+    with httpx.Client() as hc:
+        t_httpx: m_rest_td.SyncTransport = m_rest_td.via_httpx(hc)
+        t_httpx_sep: parsmith_runtime.SyncTransport = parsmith_runtime.via_httpx(hc)
+        assert isinstance(t_httpx, m_rest_td.HttpxTransport)
+        assert isinstance(t_httpx_sep, parsmith_runtime.HttpxTransport)
+
+    with requests.Session() as rs:
+        t_req: m_rest_td.SyncTransport = m_rest_td.via_requests(rs)
+        t_req_sep: parsmith_runtime.SyncTransport = parsmith_runtime.via_requests(rs)
+        assert isinstance(t_req, m_rest_td.RequestsTransport)
+        assert isinstance(t_req_sep, parsmith_runtime.RequestsTransport)
+
+    async def _check_async_clients() -> None:
+        async with httpx.AsyncClient() as ahc:
+            t_ahttpx: m_rest_td.AsyncTransport = m_rest_td.via_httpx_async(ahc)
+            t_ahttpx_sep: parsmith_runtime.AsyncTransport = parsmith_runtime.via_httpx_async(ahc)
+            assert isinstance(t_ahttpx, m_rest_td.AsyncHttpxTransport)
+            assert isinstance(t_ahttpx_sep, parsmith_runtime.AsyncHttpxTransport)
+
+        async with aiohttp.ClientSession() as asess:
+            t_aio: m_rest_td.AsyncTransport = m_rest_td.via_aiohttp(asess)
+            t_aio_sep: parsmith_runtime.AsyncTransport = parsmith_runtime.via_aiohttp(asess)
+            assert isinstance(t_aio, m_rest_td.AiohttpTransport)
+            assert isinstance(t_aio_sep, parsmith_runtime.AiohttpTransport)
+
+    asyncio.run(_check_async_clients())
 
 
 def test_rest_monad_ok_errors_unknown_transport_decode_and_programmer_bugs() -> None:

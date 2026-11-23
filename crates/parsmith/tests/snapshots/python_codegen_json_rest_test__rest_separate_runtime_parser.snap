@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Literal, NotRequired, TypeAlias, TypedDict, cast
-from parsmith_runtime import RtAssertionError, RtRegexError, RtJsonError, RtJsonPathError, RtJsonFieldMissingError, RtJsonSchemaError, rt_expect_dict, rt_expect_list, rt_resolve_dotpath, rt_json_req, rt_json_req_path, HttpRequest, RawResponse, TransportError, SyncTransport, AsyncTransport, HttpxTransport, AsyncHttpxTransport, RequestsTransport, AiohttpTransport, UrllibTransport, via_httpx, via_httpx_async, via_requests, via_aiohttp, via_urllib, rt_build_request, Ok, UnknownErr, TransportErr, DecodeErr, ErrMatcher, rt_dispatch_response, rt_rest_call, rt_rest_call_async
+from parsmith_runtime import RtAssertionError, RtRegexError, RtJsonError, RtJsonPathError, RtJsonFieldMissingError, RtJsonSchemaError, rt_expect_dict, rt_expect_list, rt_resolve_dotpath, rt_json_req, rt_json_req_path, HttpRequest, RawResponse, TransportError, HttpStatusError, HeadersLike, HttpResponseLike, AiohttpResponseLike, HttpxLike, AsyncHttpxLike, RequestsLike, AiohttpLike, SyncTransport, AsyncTransport, HttpxTransport, AsyncHttpxTransport, RequestsTransport, AiohttpTransport, UrllibTransport, via_httpx, via_httpx_async, via_requests, via_aiohttp, via_urllib, rt_build_request, Ok, UnknownErr, TransportErr, DecodeErr, ErrMatcher, rt_dispatch_response, rt_rest_call, rt_rest_call_async
 
 class UserJson(TypedDict):
     id: int
