@@ -3,7 +3,7 @@
 ## 1. `@request` Formats & Properties
 
 `@request` accepts a raw `HTTP/1.1` / `HTTP/2` request string, a POSIX `curl` command, or a scalar `define` constant name.
-- **On HTML / `(raw)struct`**: emits transport-agnostic `fetch` / `async_fetch` constructors that execute the HTTP request, optionally extract `response-path` (joining `list[str]` via `response-join`), and instantiate the parser.
+- **On HTML / `(raw)struct`**: emits transport-agnostic `fetch` / `async_fetch` constructors that execute the HTTP request, optionally extract `response-path` (joining `list[str]` via `response-join`), and instantiate the parser. In Python, `fetch` / `async_fetch` raise `HttpStatusError` on HTTP status `>= 400` and `TransportError` on network/IO failure.
 - **On `(rest)struct`**: emits typed endpoint methods that **never throw** on HTTP, network, or JSON projection failures, returning a monadic `Result` (`Ok`, `<Struct>Err<Status>[<Suffix>]`, `DecodeErr`, `UnknownErr`, or `TransportErr`).
 
 | Property | In `(rest)struct` | In HTML / `(raw)struct` | Semantics |
@@ -70,7 +70,7 @@ Syntax: `@error[:<suffix>] <status:100..599> <SchemaName> ["pos.key"...] [prop.k
 
 | Target | CLI Subcommand | Transport Factory / Client Argument | Key Target Flags |
 | :--- | :--- | :--- | :--- |
-| **Python** | `parsmith generate python` (`py`) | `via_httpx(client)`, `via_httpx_async(client)`, `via_requests(session)`, `via_aiohttp(session)`, `via_urllib()` | `-L bs4\|lxml\|parsel\|selectolax`, `--models typeddict\|dataclass`, `--http-io both\|sync\|async`, `-R` |
+| **Python** | `parsmith generate python` (`py`) | `via_httpx(client)`, `via_httpx_async(client)`, `via_requests(session)`, `via_aiohttp(session)`, `via_urllib(timeout=None)` | `-L bs4\|lxml\|parsel\|selectolax`, `--models typeddict\|dataclass`, `--http-io both\|sync\|async`, `-R` |
 | **TypeScript** | `parsmith generate ts` (`typescript`) | `viaFetch(fetchFn?)`, `viaAxios(instance)` | `-o <file.ts\|dir>` |
 | **JavaScript** | `parsmith generate js` (`javascript`) | `viaFetch(fetchFn?)`, `viaAxios(instance)` | `-o <file.js\|dir>` (emits `.js` + `.d.ts`) |
 | **Go** | `parsmith generate go` (`golang`) | `*http.Client` (`nil` uses `http.DefaultClient`) + `WithHeader`, `WithParam`, `WithCookie`, `WithTimeout` | `--package <pkg>` (default `main`), `-R` |
@@ -79,3 +79,15 @@ Syntax: `@error[:<suffix>] <status:100..599> <SchemaName> ["pos.key"...] [prop.k
 | **PHP 8.1+** | `parsmith generate php` | `Rt::viaCurl()`, `Rt::viaStream()`, `Rt::viaGuzzle($client)` | `-L native\|dom-crawler`, `--package <Namespace>`, `-R` |
 | **C# (.NET 8+)** | `parsmith generate csharp` (`cs`) | `System.Net.Http.HttpClient` + `Rt.WithHeader`, `Rt.WithParam`, `Rt.WithCookie`, `Rt.WithTimeout` | `--package <Namespace>`, `-R` |
 | **Kotlin (JVM)** | `parsmith generate kotlin` (`kt`) | `java.net.http.HttpClient` + `Rt.withHeader`, `Rt.withParam`, `Rt.withCookie`, `Rt.withTimeout` | `--package <pkg>`, `-R` |
+
+### Python Transport Factories, `*Like` Protocols & `HttpStatusError`
+
+Third-party Python transport factories require an explicit pre-configured client or session instance typed via minimal `typing.Protocol` interfaces (zero third-party imports):
+
+- `via_httpx(client)` — accepts `HttpxLike` (`httpx.Client`, `httpx2.Client`, or any compatible sync client).
+- `via_httpx_async(client)` — accepts `AsyncHttpxLike` (`httpx.AsyncClient`, `httpx2.AsyncClient`, or any compatible async client).
+- `via_requests(session)` — accepts `RequestsLike` (`requests.Session`, `curl_cffi`, `niquests`, or any compatible session).
+- `via_aiohttp(session)` — accepts `AiohttpLike` (`aiohttp.ClientSession`).
+- `via_urllib(timeout=None)` — zero-dependency stdlib transport (`urllib.request`).
+
+Client I/O errors are wrapped into `TransportError(cause)` while programming errors (`TypeError`, `AttributeError`) propagate uncaught. HTML and `(raw)struct` `fetch` / `async_fetch` raise `HttpStatusError` (with `.status`, `.headers`, `.text`, `.response`) on HTTP status `>= 400`. Under `-R / --separate-runtime`, `HttpStatusError` and all public `*Like` protocols (`HeadersLike`, `HttpResponseLike`, `AiohttpResponseLike`, `HttpxLike`, `AsyncHttpxLike`, `RequestsLike`, `AiohttpLike`) are exported from the shared runtime module.

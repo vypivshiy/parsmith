@@ -220,7 +220,9 @@ json ActionError {
 }
 ```
 
-**Python (`via_httpx` / `via_httpx_async` / `via_requests` / `via_aiohttp` / `via_urllib`):**
+**Python (`via_httpx(client)` / `via_httpx_async(client)` / `via_requests(session)` / `via_aiohttp(session)` / `via_urllib(timeout=None)`):**
+
+Third-party adapters accept explicit, pre-configured clients via structural `*Like` `typing.Protocol` interfaces (`httpx` / `httpx2`, `requests` / `curl_cffi` / `niquests`, `aiohttp`); `via_urllib(timeout=None)` uses stdlib `urllib.request`. HTML and `(raw)struct` `fetch` / `async_fetch` raise `HttpStatusError` on HTTP `>= 400`.
 
 ```python
 import httpx
@@ -296,7 +298,7 @@ A single `.kdl` schema generates idiomatic, type-checked source code across nine
 
 | Target | CLI Subcommand (& Alias) | HTML / DOM Backend | Models & JSON Projectors | HTTP & REST Transport | Runtime Options |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Python** | `parsmith generate python` (`py`) | `bs4` (default; `--bs4-parser lxml\|html.parser\|html5lib`), `lxml`, `parsel`, `selectolax` | `TypedDict` (default) or `dataclass` (`--models`); `rt_project_*` allowlist projectors | `SyncTransport` / `AsyncTransport` (`via_httpx`, `via_httpx_async`, `via_requests`, `via_aiohttp`, `via_urllib`); `--http-io both\|sync\|async` | Single file (default) or `-R` / `--separate-runtime` |
+| **Python** | `parsmith generate python` (`py`) | `bs4` (default; `--bs4-parser lxml\|html.parser\|html5lib`), `lxml`, `parsel`, `selectolax` | `TypedDict` (default) or `dataclass` (`--models`); `rt_project_*` allowlist projectors | `SyncTransport` / `AsyncTransport` (`via_httpx(client)` for `httpx`/`httpx2`, `via_httpx_async(client)`, `via_requests(session)`, `via_aiohttp(session)`, `via_urllib(timeout=None)`); `*Like` `Protocol` types & `HttpStatusError`; `--http-io both\|sync\|async` | Single file (default) or `-R` / `--separate-runtime` |
 | **TypeScript** | `parsmith generate ts` (`typescript`) | Standard Web DOM (`DOMParser`, `querySelectorAll`, `document.evaluate`) | Exported `interface` definitions + `rtProject*` allowlist projectors | `SyncTransport` / `AsyncTransport` (`viaFetch`, `viaAxios`) | Standalone `.ts` module |
 | **JavaScript** | `parsmith generate js` (`javascript`) | Standard Web DOM (`DOMParser`, `querySelectorAll`, `document.evaluate`) | ESM `.js` + companion `.d.ts` TypeScript declarations + `rtProject*` projectors | `SyncTransport` / `AsyncTransport` (`viaFetch`, `viaAxios`) | Dual `.js` + `.d.ts` files |
 | **Go** | `parsmith generate go` (`golang`) | `goquery` (`github.com/PuerkitoBio/goquery`) | Typed `struct` + `gjson` allowlist `UnmarshalJSON` | Standard `*http.Client` (`net/http`) + `WithHeader` / `WithParam` / `WithCookie` / `WithTimeout` | Single file (default) or `-R` / `--separate-runtime` (`--package <pkg>`) |
