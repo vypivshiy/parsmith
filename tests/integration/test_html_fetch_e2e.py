@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+import subprocess
+import sys
 from typing import Any
 import urllib.error
 
 import aiohttp
 import httpx
+import httpx2
 import pytest
 import requests
 
@@ -61,25 +65,26 @@ class TestSimpleHtmlFetchAllTransports:
     ) -> None:
         kdl_src = fake_server.rewrite_schema(SCHEMAS_DIR / "23_html_fetch.kdl")
         with loaded_py_module(kdl_src) as (mod, _):
-            # 1. via_httpx with explicit client and default client
+            # 1. via_httpx with explicit httpx.Client
             with httpx.Client() as hclient:
                 p_httpx = mod.SimplePage.fetch(
                     mod.via_httpx(hclient), id="1"
                 )
                 assert p_httpx.parse() == {"title": "Hello World"}
 
-            p_httpx_default = mod.SimplePage.fetch(mod.via_httpx(), id="1")
-            assert p_httpx_default.parse() == {"title": "Hello World"}
+            # 2. via_httpx with explicit httpx2.Client
+            with httpx2.Client() as h2client:
+                p_httpx2 = mod.SimplePage.fetch(
+                    mod.via_httpx(h2client), id="1"
+                )
+                assert p_httpx2.parse() == {"title": "Hello World"}
 
-            # 2. via_requests with explicit session and default session
+            # 3. via_requests with explicit requests.Session
             with requests.Session() as rsession:
                 p_req = mod.SimplePage.fetch(
                     mod.via_requests(rsession), id="1"
                 )
                 assert p_req.parse() == {"title": "Hello World"}
-
-            p_req_default = mod.SimplePage.fetch(mod.via_requests(), id="1")
-            assert p_req_default.parse() == {"title": "Hello World"}
 
     def test_async_transports_httpx_async_and_aiohttp(
         self, fake_server: FakeServer
@@ -94,10 +99,11 @@ class TestSimpleHtmlFetchAllTransports:
                     )
                     assert p1.parse() == {"title": "Hello World"}
 
-                p1_default = await mod.SimplePage.async_fetch(
-                    mod.via_httpx_async(), id="1"
-                )
-                assert p1_default.parse() == {"title": "Hello World"}
+                async with httpx2.AsyncClient() as aclient2:
+                    p1_v2 = await mod.SimplePage.async_fetch(
+                        mod.via_httpx_async(aclient2), id="1"
+                    )
+                    assert p1_v2.parse() == {"title": "Hello World"}
 
                 async with aiohttp.ClientSession() as asession:
                     p2 = await mod.SimplePage.async_fetch(
@@ -105,12 +111,147 @@ class TestSimpleHtmlFetchAllTransports:
                     )
                     assert p2.parse() == {"title": "Hello World"}
 
-                p2_default = await mod.SimplePage.async_fetch(
-                    mod.via_aiohttp(), id="1"
-                )
-                assert p2_default.parse() == {"title": "Hello World"}
-
             asyncio.run(_run())
+
+    def test_http_status_error_404_and_500_across_all_transports(
+        self, fake_server: FakeServer
+    ) -> None:
+        status_kdl = fake_server.rewrite_schema(
+            '''
+struct StatusPage {
+    @request """
+    GET /users/{{id:str}} HTTP/1.1
+    Host: example.com
+    """
+    title { css "h1"; text; fallback "" }
+}
+'''
+        )
+        cases: tuple[tuple[str, int, str], ...] = (
+            ("404", 404, "not found"),
+            ("500", 500, "internal"),
+        )
+        with loaded_py_module(status_kdl) as (mod, _):
+            with (
+                httpx.Client() as hclient,
+                httpx2.Client() as h2client,
+                requests.Session() as rsession,
+            ):
+                sync_transports = (
+                    mod.via_urllib(),
+                    mod.via_httpx(hclient),
+                    mod.via_httpx(h2client),
+                    mod.via_requests(rsession),
+                )
+                for tx in sync_transports:
+                    for status_id, expected_status, expected_snippet in cases:
+                        with pytest.raises(mod.HttpStatusError) as exc_info:
+                            mod.StatusPage.fetch(tx, id=status_id)
+                        err = exc_info.value
+                        assert not isinstance(err, mod.TransportError)
+                        assert err.status == expected_status
+                        assert err.headers.get("x-request-id") == "abc123"
+                        assert expected_snippet in err.text
+                        assert isinstance(err.response, mod.RawResponse)
+                        assert err.response.status == expected_status
+                        assert err.response.headers == err.headers
+                        assert err.response.text == err.text
+
+            async def _run_async() -> None:
+                async with (
+                    httpx.AsyncClient() as aclient,
+                    httpx2.AsyncClient() as aclient2,
+                    aiohttp.ClientSession() as asession,
+                ):
+                    async_transports = (
+                        mod.via_httpx_async(aclient),
+                        mod.via_httpx_async(aclient2),
+                        mod.via_aiohttp(asession),
+                    )
+                    for atx in async_transports:
+                        for status_id, expected_status, expected_snippet in cases:
+                            with pytest.raises(mod.HttpStatusError) as exc_info:
+                                await mod.StatusPage.async_fetch(
+                                    atx, id=status_id
+                                )
+                            err = exc_info.value
+                            assert not isinstance(err, mod.TransportError)
+                            assert err.status == expected_status
+                            assert err.headers.get("x-request-id") == "abc123"
+                            assert expected_snippet in err.text
+                            assert isinstance(err.response, mod.RawResponse)
+                            assert err.response.status == expected_status
+                            assert err.response.headers == err.headers
+                            assert err.response.text == err.text
+
+            asyncio.run(_run_async())
+
+    def test_mypy_strict_accepts_real_http_clients(
+        self, tmp_path: Path
+    ) -> None:
+        kdl_src = (SCHEMAS_DIR / "23_html_fetch.kdl").read_text(
+            encoding="utf-8"
+        )
+        res = parsmith.generate(
+            kdl_src, "python", module_stem="gen_html_clients"
+        )
+        assert res.ok, res.format_text()
+
+        gen_path = tmp_path / "gen_html_clients.py"
+        gen_path.write_text(res["gen_html_clients.py"], encoding="utf-8")
+
+        consumer_path = tmp_path / "check_real_clients.py"
+        consumer_path.write_text(
+            """from __future__ import annotations
+
+import aiohttp
+import httpx
+import httpx2
+import requests
+
+import gen_html_clients as gen
+
+
+def check_sync() -> None:
+    tx_urllib: gen.SyncTransport = gen.via_urllib()
+    tx_httpx: gen.SyncTransport = gen.via_httpx(httpx.Client())
+    tx_httpx2: gen.SyncTransport = gen.via_httpx(httpx2.Client())
+    tx_requests: gen.SyncTransport = gen.via_requests(requests.Session())
+    for tx in (tx_urllib, tx_httpx, tx_httpx2, tx_requests):
+        page: gen.SimplePage = gen.SimplePage.fetch(tx, id="1")
+        _parsed: gen.SimplePageType = page.parse()
+
+
+async def check_async() -> None:
+    tx_httpx_async: gen.AsyncTransport = gen.via_httpx_async(httpx.AsyncClient())
+    tx_httpx2_async: gen.AsyncTransport = gen.via_httpx_async(httpx2.AsyncClient())
+    tx_aiohttp: gen.AsyncTransport = gen.via_aiohttp(aiohttp.ClientSession())
+    for atx in (tx_httpx_async, tx_httpx2_async, tx_aiohttp):
+        page: gen.SimplePage = await gen.SimplePage.async_fetch(atx, id="1")
+        _parsed: gen.SimplePageType = page.parse()
+""",
+            encoding="utf-8",
+        )
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "mypy",
+                "--strict",
+                "--no-incremental",
+                "--cache-dir",
+                str(tmp_path / ".mypy_cache"),
+                str(gen_path),
+                str(consumer_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, (
+            f"mypy --strict failed:\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+        )
 
     def test_js_via_fetch(self, fake_server: FakeServer) -> None:
         kdl_src = fake_server.rewrite_schema(SCHEMAS_DIR / "23_html_fetch.kdl")
@@ -587,6 +728,11 @@ struct SearchPage {
                     mod.SimplePage.fetch(mod.via_httpx(hclient), id="1")
                 assert isinstance(exc_httpx.value.cause, httpx.HTTPError)
 
+            with httpx2.Client(timeout=0.2) as h2client:
+                with pytest.raises(mod.TransportError) as exc_httpx2:
+                    mod.SimplePage.fetch(mod.via_httpx(h2client), id="1")
+                assert isinstance(exc_httpx2.value.cause, httpx2.HTTPError)
+
             with requests.Session() as rsession:
                 with pytest.raises(mod.TransportError) as exc_req:
                     mod.SimplePage.fetch(
@@ -603,6 +749,13 @@ struct SearchPage {
                             mod.via_httpx_async(aclient), id="1"
                         )
                     assert isinstance(exc_ahx.value.cause, httpx.HTTPError)
+
+                async with httpx2.AsyncClient(timeout=0.2) as aclient2:
+                    with pytest.raises(mod.TransportError) as exc_ahx2:
+                        await mod.SimplePage.async_fetch(
+                            mod.via_httpx_async(aclient2), id="1"
+                        )
+                    assert isinstance(exc_ahx2.value.cause, httpx2.HTTPError)
 
                 timeout = aiohttp.ClientTimeout(sock_connect=0.2)
                 async with aiohttp.ClientSession(timeout=timeout) as asession:

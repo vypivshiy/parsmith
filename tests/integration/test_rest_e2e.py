@@ -9,6 +9,7 @@ import urllib.error
 
 import aiohttp
 import httpx
+import httpx2
 import pytest
 import requests
 
@@ -76,12 +77,18 @@ class TestRestSuccessVoidAndDecodeErr:
             assert r_url.value == expected
             assert r_url.headers.get("x-request-id") == "abc123"
 
-            # 2. via_httpx
+            # 2. via_httpx (httpx & httpx2)
             with httpx.Client() as hclient:
                 r_hx = mod.API.fetch(mod.via_httpx(hclient), id="42")
                 assert isinstance(r_hx, mod.Ok)
                 assert r_hx.value == expected
                 assert r_hx.headers.get("x-request-id") == "abc123"
+
+            with httpx2.Client() as h2client:
+                r_hx2 = mod.API.fetch(mod.via_httpx(h2client), id="42")
+                assert isinstance(r_hx2, mod.Ok)
+                assert r_hx2.value == expected
+                assert r_hx2.headers.get("x-request-id") == "abc123"
 
             # 3. via_requests
             with requests.Session() as rsession:
@@ -90,7 +97,7 @@ class TestRestSuccessVoidAndDecodeErr:
                 assert r_req.value == expected
                 assert r_req.headers.get("x-request-id") == "abc123"
 
-            # 4. via_httpx_async & via_aiohttp
+            # 4. via_httpx_async (httpx & httpx2) & via_aiohttp
             async def _run_async() -> None:
                 async with httpx.AsyncClient() as aclient:
                     r_ahx = await mod.API.async_fetch(
@@ -99,6 +106,14 @@ class TestRestSuccessVoidAndDecodeErr:
                     assert isinstance(r_ahx, mod.Ok)
                     assert r_ahx.value == expected
                     assert r_ahx.headers.get("x-request-id") == "abc123"
+
+                async with httpx2.AsyncClient() as aclient2:
+                    r_ahx2 = await mod.API.async_fetch(
+                        mod.via_httpx_async(aclient2), id="42"
+                    )
+                    assert isinstance(r_ahx2, mod.Ok)
+                    assert r_ahx2.value == expected
+                    assert r_ahx2.headers.get("x-request-id") == "abc123"
 
                 async with aiohttp.ClientSession() as asession:
                     r_aio = await mod.API.async_fetch(
@@ -307,14 +322,41 @@ class TestRestErrorDispatch:
             SCHEMAS_DIR / "11_rest_err_404_500.kdl"
         )
         with loaded_py_module(kdl_src) as (mod, _):
-            r_404 = mod.API.fetch(mod.via_urllib(), id="99")
-            assert isinstance(r_404, mod.APIErr404)
-            assert r_404.status == 404
+            with httpx2.Client() as h2client:
+                for tx in (mod.via_urllib(), mod.via_httpx(h2client)):
+                    r_ok = mod.API.fetch(tx, id="42")
+                    assert isinstance(r_ok, mod.Ok)
+                    assert r_ok.status == 200
+                    assert r_ok.value == {"id": 42, "name": "Alice"}
 
-            r_500 = mod.API.fetch(mod.via_urllib(), id="500")
-            assert isinstance(r_500, mod.APIErr500)
-            assert r_500.status == 500
-            assert r_500.value == {"code": 500, "message": "internal"}
+                    r_404 = mod.API.fetch(tx, id="99")
+                    assert isinstance(r_404, mod.APIErr404)
+                    assert r_404.status == 404
+                    assert r_404.value == {"code": 404, "message": "not found"}
+
+                    r_500 = mod.API.fetch(tx, id="500")
+                    assert isinstance(r_500, mod.APIErr500)
+                    assert r_500.status == 500
+                    assert r_500.value == {"code": 500, "message": "internal"}
+
+            async def _run_async_httpx2() -> None:
+                async with httpx2.AsyncClient() as aclient2:
+                    atx = mod.via_httpx_async(aclient2)
+                    a_ok = await mod.API.async_fetch(atx, id="42")
+                    assert isinstance(a_ok, mod.Ok)
+                    assert a_ok.value == {"id": 42, "name": "Alice"}
+
+                    a_404 = await mod.API.async_fetch(atx, id="99")
+                    assert isinstance(a_404, mod.APIErr404)
+                    assert a_404.status == 404
+                    assert a_404.value == {"code": 404, "message": "not found"}
+
+                    a_500 = await mod.API.async_fetch(atx, id="500")
+                    assert isinstance(a_500, mod.APIErr500)
+                    assert a_500.status == 500
+                    assert a_500.value == {"code": 500, "message": "internal"}
+
+            asyncio.run(_run_async_httpx2())
 
         js_500 = run_js_rest(kdl_src, "API", "fetch", args=["500"])
         assert js_500["ok"] is False
@@ -683,12 +725,16 @@ class TestRestPlaceholdersHeadersCookiesFormAndMultiMethod:
             SCHEMAS_DIR / "24_rest_form_body.kdl"
         )
         with loaded_py_module(kdl_form) as (mod_form, _):
-            for tx in (mod_form.via_urllib(), mod_form.via_requests()):
-                f_res = mod_form.API.fetch(tx, name="FormUser", active=True)
-                assert isinstance(f_res, mod_form.Ok)
-                assert f_res.value == {"id": 99, "name": "FormUser"}
-                raw_echo = json.loads(f_res.headers["x-echo-body"])
-                assert "name=FormUser" in raw_echo
+            with requests.Session() as rsession:
+                for tx in (
+                    mod_form.via_urllib(),
+                    mod_form.via_requests(rsession),
+                ):
+                    f_res = mod_form.API.fetch(tx, name="FormUser", active=True)
+                    assert isinstance(f_res, mod_form.Ok)
+                    assert f_res.value == {"id": 99, "name": "FormUser"}
+                    raw_echo = json.loads(f_res.headers["x-echo-body"])
+                    assert "name=FormUser" in raw_echo
 
         js_form = run_js_rest(
             kdl_form,
@@ -1355,12 +1401,18 @@ class TestRestTransportErr:
             assert r_url.status == 0
             assert isinstance(r_url.exception, urllib.error.URLError)
 
-            # 2. via_httpx
+            # 2. via_httpx (httpx & httpx2)
             with httpx.Client(timeout=0.2) as hclient:
                 r_hx = mod.API.fetch(mod.via_httpx(hclient), id="1")
                 assert isinstance(r_hx, mod.TransportErr)
                 assert r_hx.status == 0
                 assert isinstance(r_hx.exception, httpx.HTTPError)
+
+            with httpx2.Client(timeout=0.2) as h2client:
+                r_hx2 = mod.API.fetch(mod.via_httpx(h2client), id="1")
+                assert isinstance(r_hx2, mod.TransportErr)
+                assert r_hx2.status == 0
+                assert isinstance(r_hx2.exception, httpx2.HTTPError)
 
             # 3. via_requests
             with requests.Session() as rsession:
@@ -1371,7 +1423,7 @@ class TestRestTransportErr:
                 assert r_req.status == 0
                 assert isinstance(r_req.exception, requests.RequestException)
 
-            # 4. via_httpx_async & via_aiohttp
+            # 4. via_httpx_async (httpx & httpx2) & via_aiohttp
             async def _run_async() -> None:
                 async with httpx.AsyncClient(timeout=0.2) as aclient:
                     r_ahx = await mod.API.async_fetch(
@@ -1380,6 +1432,14 @@ class TestRestTransportErr:
                     assert isinstance(r_ahx, mod.TransportErr)
                     assert r_ahx.status == 0
                     assert isinstance(r_ahx.exception, httpx.HTTPError)
+
+                async with httpx2.AsyncClient(timeout=0.2) as aclient2:
+                    r_ahx2 = await mod.API.async_fetch(
+                        mod.via_httpx_async(aclient2), id="1"
+                    )
+                    assert isinstance(r_ahx2, mod.TransportErr)
+                    assert r_ahx2.status == 0
+                    assert isinstance(r_ahx2.exception, httpx2.HTTPError)
 
                 timeout = aiohttp.ClientTimeout(sock_connect=0.2)
                 async with aiohttp.ClientSession(timeout=timeout) as asession:
