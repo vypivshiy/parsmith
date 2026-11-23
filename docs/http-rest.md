@@ -14,7 +14,7 @@ The `@request` directive operates in two distinct contexts depending on the encl
 | **Parser Coupling** | Parser class remains transport-agnostic (can always be instantiated directly from an HTML/text string) | Struct consists exclusively of `@doc`, `@request`, and `@error[:<suffix>]` directives (`E203` on regular fields) |
 | **`name=` & `response=`** | Optional on a single `@request` (required when declaring multiple `@request` blocks on the same struct) | **Mandatory** on every `@request`: `name="<kebab-id>"` and `response="<SchemaName>"` (or `response=#null`) |
 | **Return Value** | Instantiated parser (`<Struct>` in Python/TS/JS/Go, `Result<<Struct>Parser, rt::RtError>` in Rust, `{:ok, parser}` in Elixir) | Monadic `Result` union (`Ok`, `<Struct>Err<Status>[<Suffix>]`, `DecodeErr`, `UnknownErr`, `TransportErr`) |
-| **Error Behavior** | Raises/returns transport or HTTP $\ge 400$ errors | **Never throws** on HTTP, network, or JSON decode failures; all outcomes are represented as typed `Result` variants |
+| **Error Behavior** | Raises/returns transport (`TransportError`) or HTTP $\ge 400$ errors (`HttpStatusError` in Python) | **Never throws** on HTTP, network, or JSON decode failures; all outcomes are represented as typed `Result` variants |
 
 ### Why `(rest)struct` & `@request` Instead of OpenAPI?
 
@@ -180,26 +180,30 @@ The linter enforces the following `@request` placeholder rules (`E002`):
 
 `parsmith` does not hardcode or branch on third-party HTTP libraries at compile time. Instead:
 
-- **Python** and **TypeScript/JavaScript** emit a lightweight transport protocol (`HttpRequest` $\to$ `RawResponse`, raising `TransportError` on network failure) alongside zero-overhead `via_*` adapter factories that lazily import the chosen HTTP library at runtime.
+- **Python** and **TypeScript/JavaScript** emit a lightweight transport protocol (`HttpRequest` $\to$ `RawResponse`, raising `TransportError` on network failure) alongside `via_*` adapter factories typed with structural **Client protocols (`*Like`)** so generated modules have zero third-party HTTP imports.
 - **Go** and **Rust** bind directly to their ecosystem-standard clients (`*http.Client` in Go and `&reqwest::Client` in Rust).
 
 | Target | Transport Parameter | Built-in `via_*` Adapters / Client Type | Per-Call Request Overrides | HTML / `raw` Method Name | `(rest)struct` Method Name |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Python** *(sync)* | `transport: SyncTransport` | `via_httpx(client=None)`, `via_requests(session=None)`, `via_urllib(timeout=None)` | `**kwargs: Any` (`headers`, `params`, `cookies`, client kwargs) | `Struct.fetch(transport, ...)` | `Api.<snake_name>(transport, ...)` |
-| **Python** *(async)* | `transport: AsyncTransport` | `via_httpx_async(client=None)`, `via_aiohttp(session=None)` | `**kwargs: Any` | `Struct.async_fetch(transport, ...)` | `Api.async_<snake_name>(transport, ...)` |
+| **Python** *(sync)* | `transport: SyncTransport` | `via_httpx(client)`, `via_requests(session)`, `via_urllib(timeout=None)` | `**kwargs: Any` (`headers`, `params`, `cookies`, client kwargs) | `Struct.fetch(transport, ...)` | `Api.<snake_name>(transport, ...)` |
+| **Python** *(async)* | `transport: AsyncTransport` | `via_httpx_async(client)`, `via_aiohttp(session)` | `**kwargs: Any` | `Struct.async_fetch(transport, ...)` | `Api.async_<snake_name>(transport, ...)` |
 | **TypeScript / JS** | `transport: HttpTransport` | `viaFetch(fetchFn?)`, `viaAxios(axiosInstance)` | `extra?: Record<string, unknown>` / `RtRequestOptions` | `Struct.fetch(transport, ...)` | `Api.<camelName>(transport, ...)` & `Api.<snake_name>(...)` |
 | **Go** | `client *http.Client` (`nil` $\to$ `http.DefaultClient`) | Standard `*http.Client` | `opts ...RtHttpOption` (`WithHeader`, `WithParams`, `WithTimeout`, ...) | `New<Struct>Fetch(ctx, client, ..., opts...)` | `New<Struct>().<PascalName>(client, ..., opts...)` |
 | **Rust** | `client: &reqwest::Client` | Standard `&reqwest::Client` | Configured on `reqwest::Client` (or `_with_opts` extensions) | `<Struct>Parser::fetch(client, ...)` | `<Struct>::<snake_name>(client, ...)` / `<Struct>::<snake_name>_with_opts(client, ..., opts)` |
 
-### Python Transports & `--http-io`
+### Python Transports, Client Protocols (`*Like`), & `HttpStatusError`
 
-In Python, `parsmith generate python` accepts `--http-io both|sync|async` (default `both`):
+In Python, `parsmith generate python` accepts `--http-io both|sync|async` (default `both`). Third-party adapters require an explicit, pre-configured client or session instance typed via minimal `typing.Protocol` interfaces (zero third-party imports, compatible with `mypy --strict`):
 
-- `via_httpx(client=None)`: Wraps an `httpx.Client` (or creates a per-request client when `None`).
-- `via_httpx_async(client=None)`: Wraps an `httpx.AsyncClient` (or creates a per-request async client when `None`).
-- `via_requests(session=None)`: Wraps a `requests.Session` (or creates a per-request session when `None`).
-- `via_aiohttp(session=None)`: Wraps an `aiohttp.ClientSession` (or creates a per-request session when `None`).
-- `via_urllib(timeout=None)`: Uses Python's standard library `urllib.request` with zero third-party dependencies.
+- `via_httpx(client)`: Accepts `HttpxLike` (`httpx.Client`, `httpx2.Client`, or any compatible sync client).
+- `via_httpx_async(client)`: Accepts `AsyncHttpxLike` (`httpx.AsyncClient`, `httpx2.AsyncClient`, or any compatible async client).
+- `via_requests(session)`: Accepts `RequestsLike` (`requests.Session`, `curl_cffi`, `niquests`, or any compatible session).
+- `via_aiohttp(session)`: Accepts `AiohttpLike` (`aiohttp.ClientSession`).
+- `via_urllib(timeout=None)`: Zero-dependency stdlib transport built on `urllib.request`.
+
+Third-party adapters wrap client I/O errors into `TransportError(cause)` while letting programming errors (`TypeError`, `AttributeError`) propagate uncaught. In HTML and `(raw)struct` `@request` helpers (`fetch` / `async_fetch`), responses with HTTP status `>= 400` raise `HttpStatusError` (exposing `.status`, `.headers`, `.text`, and `.response`), while `(rest)struct` endpoints route all status codes through `@error` discriminators and `UnknownErr`.
+
+When using `-R` / `--separate-runtime`, `HttpStatusError` and all public `*Like` `typing.Protocol` types (`HeadersLike`, `HttpResponseLike`, `AiohttpResponseLike`, `HttpxLike`, `AsyncHttpxLike`, `RequestsLike`, `AiohttpLike`) are exported from the shared runtime module.
 
 Custom transports can be implemented by providing any object with `send(self, req: HttpRequest) -> RawResponse` (or `async def send(self, req: HttpRequest) -> RawResponse`) that raises `TransportError(cause)` on network failure.
 

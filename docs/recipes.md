@@ -536,7 +536,9 @@ Every `(rest)struct` endpoint returns a discriminated result covering five outco
 - **`UnknownErr`** — Non-`2xx` HTTP status that did not match any `@error` rule.
 - **`TransportErr`** — Network/DNS/socket failure raised by the underlying HTTP transport.
 
-#### Python (`via_httpx` / `via_httpx_async` / `via_requests` / `via_aiohttp` / `via_urllib`)
+#### Python (`via_httpx(client)` / `via_httpx_async(client)` / `via_requests(session)` / `via_aiohttp(session)` / `via_urllib(timeout=None)`)
+
+Third-party Python transport factories require an explicit client or session instance typed via public `*Like` `typing.Protocol` interfaces (`HttpxLike` for `httpx.Client` / `httpx2.Client`, `AsyncHttpxLike` for `httpx.AsyncClient` / `httpx2.AsyncClient`, `RequestsLike` for `requests.Session` / `curl_cffi` / `niquests`, and `AiohttpLike` for `aiohttp.ClientSession`); `via_urllib(timeout=None)` uses stdlib `urllib.request`. (For HTML and `(raw)struct` `@request` helpers, `fetch` / `async_fetch` raise `HttpStatusError` on HTTP `>= 400`.)
 
 ```python
 import httpx
