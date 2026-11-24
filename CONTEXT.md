@@ -145,7 +145,7 @@ Two-pass batch code generation (`-R / --separate-runtime`) over a directory or l
 _Avoid_: per-file runtime overwrite, last-file-wins tree-shaking
 
 **Runtime namespace (`rt`)**:
-The unified naming convention for all generated runtime helpers, error classes, JSON projectors, table sentinels, DOM type aliases, and REST error matcher tables across targets (`rt_<snake>` / `Rt<Pascal>` / `RT_<UPPER>` in Python; exported `rt<Pascal>` / `Rt<Pascal>` / `RT_<UPPER>` in TypeScript and JavaScript; package-private `rt<Pascal>` and exported `Rt<Pascal>` in Go; `rt::*` module with `rt::RtError` and `RT_<UPPER>` in Rust; `Rt.*` module in Elixir; `Rt::*` class in PHP; `Rt.*` static class in C#; `Rt.*` object in Kotlin), while keeping the public HTTP transport and monadic REST result contracts (`HttpRequest`, `RawResponse`, `TransportError`, `SyncTransport`, `AsyncTransport`, `HttpTransport`, `via_*`, `With*`, `Ok`, `UnknownErr`, `TransportErr`, `DecodeErr`, `ErrMatcher`) unprefixed.
+The unified naming convention for all generated runtime helpers, error classes, JSON projectors, table sentinels, DOM type aliases, and REST error matcher tables across targets (`rt_<snake>` / `Rt<Pascal>` / `RT_<UPPER>` in Python; exported `rt<Pascal>` / `Rt<Pascal>` / `RT_<UPPER>` in TypeScript and JavaScript; package-private `rt<Pascal>` and exported `Rt<Pascal>` in Go; `rt::*` module with `rt::RtError` and `RT_<UPPER>` in Rust; `Rt.*` module in Elixir; `Rt::*` class in PHP; `Rt.*` static class in C#; `Rt.*` object in Kotlin), while keeping the public HTTP transport, client protocol, and monadic REST result contracts (`HttpRequest`, `RawResponse`, `TransportError`, `HttpStatusError`, `SyncTransport`, `AsyncTransport`, `HttpTransport`, `HeadersLike`, `HttpResponseLike`, `AiohttpResponseLike`, `HttpxLike`, `AsyncHttpxLike`, `RequestsLike`, `AiohttpLike`, `AxiosLike`, `via_*`, `With*`, `Ok`, `UnknownErr`, `TransportErr`, `DecodeErr`, `ErrMatcher`) unprefixed.
 _Avoid_: `std_*` / `std*` prefix, legacy `ssc_*` / `ssc*` / `Ssc*` prefix, leading-underscore `_` module helpers
 
 **DomSpelling**:
@@ -156,18 +156,26 @@ _Avoid_: HTTP transport adapter
 The explicit object/protocol interface (`send(req: HttpRequest) -> RawResponse`) unifying third-party HTTP clients without compile-time `--http-client` branching or runtime duck-typing heuristics.
 _Avoid_: HttpLibStrategy, duck-typed client heuristics
 
+**Client protocol (`*Like`)**:
+A minimal structural typing interface (`typing.Protocol` in Python: `HeadersLike`, `HttpResponseLike`, `AiohttpResponseLike`, `HttpxLike`, `AsyncHttpxLike`, `RequestsLike`, `AiohttpLike`; TypeScript `AxiosLike`) describing only the request/response contract consumed by a built-in transport adapter without importing third-party HTTP libraries or binding to a single package name (`httpx` vs `httpx2`).
+_Avoid_: `importlib` dynamic client loading, `client: Any = None`
+
 **HttpRequest / RawResponse**:
 The normalized request (`method`, `url`, `headers`, `params`, `cookies`, `body`, `body_kind`, `extra`) and response (`status`, `headers`, `text`) data structures exchanged across `SyncTransport` / `AsyncTransport`.
 _Avoid_: raw library response object
 
 **TransportError**:
-The single boundary exception raised by a transport adapter when its underlying HTTP client encounters a network/IO failure (`httpx.HTTPError`, `aiohttp.ClientError`, `requests.RequestException`, `urllib.error.URLError`), caught by the REST runtime to produce `TransportErr`.
-_Avoid_: blanket `except Exception` heuristic
+The single boundary exception raised by a transport adapter when its underlying HTTP client encounters a network/IO failure before producing a usable HTTP response (re-raising programming errors such as `TypeError` and `AttributeError` in Python adapters), caught by the REST runtime to produce `TransportErr`.
+_Avoid_: swallowing `TypeError`/`AttributeError` programmer bugs, conflating HTTP `>= 400` status codes with transport failures
+
+**HttpStatusError**:
+The explicit exception raised by HTML/`(raw)struct` `@request` fetch helpers (`rt_fetch`, `rt_fetch_async`, C# `HttpStatusError`) when a transport returns a `RawResponse` with `status >= 400`, exposing the response `status`, `headers`, `text`, and `response` without calling client-specific `raise_for_status()`.
+_Avoid_: calling `resp.raise_for_status()` inside transport adapters, raising `HttpStatusError` in `(rest)struct` endpoints
 
 **DecodeErr**:
 The dedicated REST error variant (`DecodeErr` in Python/TS/JS/PHP/C#/Kotlin, `*DecodeErr` in Go, `<Struct>Error::Decode` in Rust, `%Rt.DecodeErr{}` in Elixir) returned when an HTTP response arrives from the network (`2xx` or unmatched error) but fails JSON parsing or violates its declared `JsonDef` projector contract.
 _Avoid_: uncaught projector exception in REST client, conflating decode failures into `UnknownErr`
 
 **Transport factory (`via_*`)**:
-A concise constructor helper (`via_httpx`, `via_httpx_async`, `via_requests`, `via_aiohttp`, `via_urllib`, `viaFetch`, `viaAxios`) returning a concrete `SyncTransport` / `AsyncTransport` adapter instance.
-_Avoid_: `use_*` prefix (collides with React Hook lint rules in JS/TS)
+A concise constructor helper returning a concrete `SyncTransport` / `AsyncTransport` / `HttpTransport` adapter instance: third-party adapters take an explicit pre-configured client/session (`via_httpx(client)`, `via_httpx_async(client)`, `via_requests(session)`, `via_aiohttp(session)`, `viaAxios(instance)`), while stdlib/built-in adapters (`via_urllib(timeout=None)`, `viaFetch(fetchFn?)`) remain zero-argument.
+_Avoid_: `use_*` prefix (collides with React Hook lint rules in JS/TS), implicit default client instantiation via `importlib`
