@@ -1,6 +1,6 @@
 ---
 name: parsmith-dsl
-version: "1.3.0"
+version: "1.3.1"
 dsl_version: "2.1"
 description: >
   Author, combine, validate, and compile KDL 2.0 Schema DSL (v2.1) files with `parsmith` for HTML DOM scraping, plain-text extraction, embedded JSON projection, and typed REST/JSON HTTP clients across 9 targets (`python`/`py`, `ts`, `js`, `go`, `rust`/`rs`, `elixir`/`ex`, `php`, `csharp`/`cs`, `kotlin`/`kt`). Covers `(item|list|table|dict|flat|raw|rest)struct`, `fn`, `(raw)fn`, `json`, `(array)json`, `(dict)json`, `@request`, `@error[:<suffix>]`, `css`/`xpath`/`re`/`jsonify`, `parsmith check`, `parsmith generate`, and `parsmith json-to-kdl`. Use whenever designing, refactoring, or debugging `.kdl` schemas or generated `parsmith` parsers/clients.

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "parsmith"
-version = "1.3.0"
+version = "1.3.1"
 description = "Universal Rust compiler, linter, and multi-target codegen engine for KDL 2.0 Schema DSL v2.1"
 readme = "README.md"
 license = { file = "LICENSE" }
